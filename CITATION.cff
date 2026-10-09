@@ -1,0 +1,56 @@
+# Citation File Format (CFF) 1.2.0
+# GitHub 会读取本文件并在仓库侧栏显示「Cite this repository」。
+# 规范见 https://citation-file-format.github.io/
+cff-version: 1.2.0
+message: "If you use this tool in your research, please cite the paper it is based on."
+
+title: "STIB Planner — 拟杆菌 STIB 基因编辑方案生成器"
+abstract: >
+  面向首次开展拟杆菌（Bacteroides）编辑的课题组的方案生成工具。
+  输入基因组文件与目标基因，输出位点决策、全基因组脱靶评估、
+  可下单的寡核苷酸与引物、可照着做的定制实验协议，以及 SnapGene 图谱。
+  已实现为独立 CLI 与 DeepSeek Harness 插件。
+type: software
+version: "0.0.1"
+date-released: "2026-10-09"
+license: MIT
+
+# ── 软件自身的贡献者（如需修改请按实际情况填写）──
+authors:
+  - family-names: "Hu"
+    given-names: "Yucan"
+
+# ── 本工具所依据的论文（DOI 已由课题组确认）──
+# ⚠️ 使用本工具产出方案时，请引用这篇论文 —— 全部领域知识、条件值、
+#    判定逻辑都来自它与其配套 SOP。
+references:
+  - type: article
+    title: >-
+      Targeted genomic editing of human gut Bacteroides species based on
+      CRISPR-associated transposases
+    authors:
+      - family-names: "Hu"
+        given-names: "Yucan"
+      - family-names: "Li"
+        given-names: "Qingmei"
+      - family-names: "Li"
+        given-names: "Yingying"
+      - family-names: "Zeng"
+        given-names: "Yu"
+      - family-names: "Zheng"
+        given-names: "Linggang"
+      - family-names: "Shen"
+        given-names: "Juntao"
+      - family-names: "Gao"
+        given-names: "Xiang"
+      - family-names: "Zhao"
+        given-names: "Guo-Ping"
+      - family-names: "Zhao"
+        given-names: "Wei"
+      - family-names: "Dai"
+        given-names: "Lei"
+    journal: "Cell Systems"
+    year: 2026
+    volume: 101650
+    doi: "10.1016/j.cels.2026.101650"
+    url: "https://doi.org/10.1016/j.cels.2026.101650"

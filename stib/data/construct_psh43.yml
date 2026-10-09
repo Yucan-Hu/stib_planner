@@ -1,0 +1,327 @@
+# psh43 载体构建规范 —— 转座子臂边界与 cargo 放置
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# 数据来源
+#   testdata/psh4300C.dna —— 课题组提供的 SnapGene 文件（10,040 bp，环状）
+#   解析：stib/buildout.py::read_snapgene（复刻 Biopython SnapGeneIO 逻辑）
+#   独立验证：SOP 引物 GA725 / GA778 在序列中唯一命中，位置与预期拓扑一致
+#
+# ⚠️ 本文件由 stib/yamlmini.py 读取（为保持零第三方依赖）。
+#    支持：嵌套映射、列表、块标量(> |)、行内 [a, b] / {k: v}。
+#    **不支持跨行的行内映射** —— 需要附加字段时另起一行缩进，
+#    不要把 {…} 拆成两行，也不要靠空格对齐列（改一个数字就要重排）。
+# ═══════════════════════════════════════════════════════════════════════════
+
+meta:
+  name: psh43 系列（Cas12k–TnsC 融合）
+  version: "0.2"
+  backbone_file: testdata/psh4300C.dna
+  backbone_length: 10040
+  topology: circular
+  source_protocol: 039_STIB 载体构建.md（2026-08-11，Yucan Hu）
+  source_paper: Cell Systems 2026, 101650. doi:10.1016/j.cels.2026.101650
+
+# ---------------------------------------------------------------------------
+# 元件坐标（0-based 半开，取自 psh4300C.dna 的实际注释）
+# ---------------------------------------------------------------------------
+elements:
+  - name: AmpR promoter
+    start: 134
+    end: 239
+    strand: 1
+  - name: AmpR
+    start: 239
+    end: 1100
+    strand: 1
+  - name: oriT (incP)
+    start: 1263
+    end: 1373
+    strand: 1
+  - name: R6K gamma ori
+    start: 1487
+    end: 1876
+    strand: 1
+  - name: MCS (pUC18/19)
+    start: 1904
+    end: 1907
+    strand: 1
+  - name: P_BfP1E6 (启动子)
+    start: 1930
+    end: 2094
+    strand: 1
+  - name: RBS8
+    start: 2094
+    end: 2127
+    strand: 1
+  - name: nAnil (Cas12k 核酸酶)
+    start: 2127
+    end: 2892
+    strand: 1
+  - name: XTEN linker
+    start: 2892
+    end: 2940
+    strand: 1
+  - name: BtTnsB
+    start: 2946
+    end: 4698
+    strand: 1
+  - name: RBSB5
+    start: 4698
+    end: 4744
+    strand: 1
+  - name: BtTniQ
+    start: 4744
+    end: 5248
+    strand: 1
+  - name: RBSB6
+    start: 5248
+    end: 5294
+    strand: 1
+  - name: BtCas12k
+    start: 5294
+    end: 7211
+    strand: 1
+  - name: XTEN linker 2
+    start: 7211
+    end: 7265
+    strand: 1
+  - name: BtTnsC
+    start: 7265
+    end: 8093
+    strand: 1
+  - name: sgRNA cassette
+    start: 8112
+    end: 8342
+    strand: 1
+  - name: bsa1 spacer
+    start: 8342
+    end: 8366
+    strand: 1
+  - name: T7Te terminator
+    start: 8366
+    end: 8394
+    strand: 1
+  - name: LE-14
+    start: 8429
+    end: 8474
+    strand: 1
+    note: provide the recognition sequence for AniI
+  - name: wt I-AniI site
+    start: 8440
+    end: 8460
+    strand: -1
+  - name: LE
+    start: 8474
+    end: 8590
+    strand: 1
+  - name: RE
+    start: 9784
+    end: 9995
+    strand: 1
+  - name: RE14
+    start: 9995
+    end: 10040
+    strand: 1
+  # ---- cargo 区内的元件（v0.7 补入 elements，使图谱能显示它们）----
+  - name: rrnB T2 terminator
+    start: 8640
+    end: 8668
+    strand: 1
+  - name: rrnB T1 terminator
+    start: 8759
+    end: 8846
+    strand: -1
+  - name: CmR
+    start: 8932
+    end: 9592
+    strand: -1
+    note: confers resistance to chloramphenicol
+  - name: PcfxA
+    start: 9592
+    end: 9714
+    strand: -1
+
+# ---------------------------------------------------------------------------
+# ★ cargo 槽位（本规范的核心）
+# ---------------------------------------------------------------------------
+cargo_slot:
+  start: 8590
+  end: 9784
+  length: 1194
+  note: >
+    **LE 结束（8,590）到 RE 开始（9,784）之间的唯一合法插入区间。**
+    cargo 必须落在这里，紧邻 LE 的 3' 端与 RE 的 5' 端。
+    不得进入 LE-14 / LE 或 RE / RE14 内部，也不得插到酶那一侧。
+  assembly_strategy: keep_cmr
+  #: ★ 两个可选的 cargo 插入位点（v0.8，依据课题组手绘图谱）
+  #:
+  #: 课题组明确：**两个位置都可以放**，按 cargo 是否需表达选择。
+  #: 若 cargo 需要表达，**表达方向应与 CmR 一致**（CmR 在负链）。
+  sites:
+    - id: after_le
+      label: 整段替换 LE–RE 之间（cargo 长度无限制）
+      #: 课题组 v0.10 澄清：这个位点就是把 LE 与 RE 之间的内容**全部取代**，
+      #: 因此不存在「装不下」的问题。
+      region: [8590, 9784]
+      cargo_strand: 1
+      #: 整段替换语义：cargo 长度**不受区间长度限制**，
+      #: 区间内的所有元件都会被替换掉。
+      replace_all: true
+      preserve: []
+      note: >
+        LE 之后到 RE 之前（8,590–9,784）全部由新 cargo 取代。
+        **cargo 长度不受限**（区间内原有元件会一并被替换，
+        包括两个 rrnB 终止子与 PcfxA-CmR）。
+        ⚠️ 走这条会**失去氯霉素筛选**（CmR 在区间内），须另设筛选手段。
+
+    - id: after_selection
+      label: rrnB T1 之后 / NspI 位点附近（保留筛选盒）
+      #: ★ 课题组 v0.10 给出的确切区间。
+      #:   两端各留约 20 bp 缓冲：
+      #:     8,846（rrnB T1 末端）→ 8,866 起点：缓冲 20 bp
+      #:     8,909 终点 → 8,932（CmR 起点）：缓冲 23 bp
+      region: [8866, 8909]
+      cargo_strand: -1
+      preserve: [rrnB T2 terminator, rrnB T1 terminator, CmR, PcfxA]
+      note: >
+        插在 rrnB T1 终止子之后、CmR 表达框之前，两端留缓冲。
+        **保留两个 rrnB 终止子与 PcfxA-CmR**，氯霉素筛选不受影响。
+        **cargo 若需表达，其启动子驱动的表达顺序必须与 CmR 表达框一致
+        （CmR 在负链 → cargo_strand = -1）。**
+      homology_source: >
+        新 cargo 与质粒的同源来自 **GA778 的后 20 bp**（退火段
+        GTGGCCTAT… 的 3' 端，对应载体 8,889–8,908）。
+        Cargo1 / Cargo2 是**扩增 STIB 质粒片段**用的引物配对，
+        **不参与新 cargo 的替换**；新 cargo 需**全新设计自己的引物**。
+
+  #: 关于「Cargo1 / Cargo2」的澄清（v0.10，易误解）
+  #:   Cargo1 与 Cargo2 分别与 GA725 / GA778 配对，用于**扩增 STIB 质粒片段**，
+  #:   它们不参与新 cargo 的替换。
+  #:   新 cargo 的引物完全另行设计；与质粒的同源由
+  #:   「Cargo1 区域」与「GA778 后 20 bp」提供。
+
+  #: 关于「最大连续空档」的说明（v0.9）
+  #: 早期版本把站点区间内已有的终止子算作「占位」，据此报出「最大连续空档 91 bp」，
+  #: 让课题组以为 cargo 长度受限。**这是理解偏差**：
+  #:   - after_le 位点本就是**整段替换**，长度无限制。
+  #:   - after_selection 的实际插入区域由 Cargo1/Cargo2 引物决定。
+  #: 终止子占位提醒仍有价值，但只应作为「这条路线会动到哪些元件」的提示，
+  #: **不应解读为长度上限**。
+
+  assembly_strategy_note: >
+    两个位点都可用，按需求选择：
+      after_le          → 整段替换 LE–RE 之间（8,590–9,784），cargo 长度无限制，
+                          但会失去 PcfxA-CmR（氯霉素筛选）。
+      after_selection   → 插在 8,866–8,909（rrnB T1 之后 / NspI 位点附近），
+                          两端留缓冲，保留两个终止子与 CmR 筛选。
+                          **cargo 表达顺序须与 CmR 表达框一致（负链）。**
+
+# ---------------------------------------------------------------------------
+# 转座子臂（用于硬性校验）
+# ---------------------------------------------------------------------------
+arms:
+  LE:
+    core_start: 8474
+    core_end: 8590
+    extended_start: 8429
+    extended_end: 8590
+    rule: cargo 必须紧接其 3' 端（下游），中间不得插入序列
+  RE:
+    core_start: 9784
+    core_end: 9995
+    extended_start: 9784
+    extended_end: 10040
+    rule: cargo 必须紧接其 5' 端（上游），中间不得插入序列
+
+# ---------------------------------------------------------------------------
+# SOP 引物（已在本文中独立验证定位）
+# ---------------------------------------------------------------------------
+primers:
+  GA725:
+    seq: GACCAGTGTCTTGTGTCTCTTC
+    description: amplicon of STIB enzyme and LE
+    template: Psh4300C
+    tm: 57
+    product_size: 6986
+    anneal_pos: 1904
+    product_end: 8890
+    role: Fragment 1 的正向引物
+    note: >
+      实测：从 1,904 延伸 6,986 bp 至 **8,890** —— 即**穿过 LE（8,590）
+      进入 cargo 区**。所以 Fragment 1 的 3' 末端并不终止于 LE，
+      而是终止在 cargo 区内部的 8,890。
+  GA778:
+    seq: GTGGCCTATcaagattacccg
+    description: Amplicon of STIB backbone and RE-PcfxA-CmR
+    template: Psh4300C
+    tm: 58
+    product_size: 3076
+    anneal_pos: 8888
+    role: Fragment 3 的反向引物
+    note: >
+      去掉 5' 小写部分（caagattacccg，应为同源臂）后，GTGGCCTAT 在正链
+      8,888 唯一命中。作为反向引物，其产物向**上游**延伸 3,076 bp。
+
+# ---------------------------------------------------------------------------
+# ⚠️ 待确认（无法从文件 + SOP 唯一确定，故不猜）
+# ---------------------------------------------------------------------------
+open_questions:
+  #: Q1 已由课题组于 v0.7 澄清，见 cargo_slot.assembly_strategy 与 insert_between。
+  #: 保留记录以便追溯。
+  - id: Q1
+    status: resolved
+    question: cargo 是替换 LE 与 RE 之间全部 1,194 bp，还是插入其中某个子位置？
+    resolution: >
+      **两种都支持，由用户选择。** 默认策略是 keep_cmr —— 保留 CmR 筛选盒，
+      新 cargo 插入 LE 之后、CmR/PcfxA 之前（见 cargo_slot.insert_between）。
+      若用户希望把 CmR 表达框一起换掉，改用 replace_selection 策略
+      （此时不再有氯霉素筛选，需另设筛选手段）。
+    original_evidence_for_replace:
+    evidence_for_replace: >
+      LE 与 RE 之间目前只有 rrnB 终止子 + CmR + PcfxA，没有 cargo 占位；
+      且 GA725 产物（1,904→8,890）与 GA778 产物（8,888→骨架）
+      **在 8,888–8,890 首尾相接**，两片段合起来恰好覆盖 LE→cargo 区→RE。
+    evidence_against: >
+      SOP 写「cargo 相关引物**不含有同源区段**」。若 cargo 只是替换槽位内容，
+      cargo 引物就**必须**带同源臂才能与 GA725/GA778 产物重叠 —— 两句相互矛盾。
+    impact: 直接决定 cargo 引物的 5' 端要加什么序列
+    needs: 课题组指出实际做法，或给一次成功构建的引物记录
+  - id: Q2
+    question: CmR 与 PcfxA 是否保留在 cargo 之外？
+    evidence: >
+      两者位于 8,932–9,714，处于 LE–RE 之间。若 cargo 替换整段 1,194 bp，
+      CmR 会被一并替换 —— 那筛选标记从何而来？
+      （GA778 片段 description 说它自带 PcfxA-CmR，但该段又在 GA725 产物范围内。）
+    impact: 决定插入后能否继续用氯霉素筛选
+    needs: 确认 CmR 的实际归属
+
+# ---------------------------------------------------------------------------
+# Gibson 参数（来自 SOP）
+# ---------------------------------------------------------------------------
+gibson:
+  overlap_len_recommended: 22
+  overlap_len_min: 15
+  overlap_len_max: 25
+  temperature_C: 50
+  time_two_fragment_min: 15
+  time_multi_fragment_min: 40
+  pmol_per_fragment: 0.16
+  pmol_backbone: 0.08
+  pmol_formula: pmol = weight(ng) / (length(bp) × 0.65)
+
+# ---------------------------------------------------------------------------
+# cargo 硬性检查项
+# ---------------------------------------------------------------------------
+cargo_checks:
+  forbidden_motifs:
+    - motif: GGTCTC
+      name: BsaI
+      reason: 本载体用 BsaI-HF2 Golden Gate 更换 sgRNA（SOP §2），cargo 内的 BsaI 位点会被切开
+    - motif: GAGACC
+      name: BsaI(rc)
+      reason: 同上（反向互补）
+  warn_motifs:
+    - motif: GAATTC
+      name: EcoRI
+      reason: 常见克隆位点
+  require_forward_orientation: true

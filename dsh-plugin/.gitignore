@@ -1,0 +1,7 @@
+﻿node_modules/
+lib/
+# 打包时由 scripts/stage-python.mjs 生成的 Python 分发副本
+# 权威源码在仓库根 ../stib
+stib/
+*.tgz
+*.log

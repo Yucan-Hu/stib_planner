@@ -1,0 +1,39 @@
+MIT License
+
+Copyright (c) 2026 STIB Planner contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## 重要提示：本软件不替代实验判断
+
+本项目产出的是**实验方案建议**，不是经过湿实验验证的结论。使用者须自行：
+
+1. **完成全基因组脱靶交叉核对** —— 内置引擎为 6-mer 块 + 替换枚举，
+   ≤4 错配保证不漏检（已用暴力穷举交叉验证），但**不等价于 Cas-OFFinder 穷举**；
+   >4 错配时保证失效。发表级结果请用 Cas-OFFinder 复核。
+2. **核对所有条件值** —— 每个值都带出处（论文 / 补充表 / 实验记录），
+   但最终以课题组原始 SOP 与原始文献为准。
+3. **确认引物** —— Tm 为估算值，首次使用须梯度 PCR 确认；
+   未经二聚体/发夹结构检验。
+4. **遵守生物安全与法规** —— 涉及受管制生物、致病性增强、抗性播散的编辑目标，
+   本项目不予支持，且使用者须自行取得相应审批。
+
+作者不对任何实验后果、数据损失或第三方权利侵害承担责任。

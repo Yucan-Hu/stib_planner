@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 插件构建产物与分发副本
+# lib/ 由 tsc 生成；stib/ 是打包时从仓库根复制进来的分发副本
+# （权威源码在仓库根的 stib/，不要重复提交）
+dsh-plugin/lib/
+dsh-plugin/stib/
+dsh-plugin/node_modules/
+dsh-plugin/*.tgz
+
+# 运行产出（方案 / 图谱 / 报告）
+# 运行结果不是源码。要看示例就本地跑：
+#   python -m stib.cli selftest
+#   python -m stib.cli plan --genome testdata/mini.gb --gene thrA --detailed --out out/plan.md
+#
+# 注意必须写 out/* 而不是 out/：
+#   父目录被整体忽略时，git 不会进入该目录查找否定规则，
+#   所以对 "out/" 写 !out/README.md 无效。改成 "out/*" 后逐文件匹配才生效。
+out/*
+!out/README.md
+plan_*.md
+plan_*.json
+plan_*.html
+batch_*.md
+batch_*.json
+batch_*.html
+
+# 基因组缓存（体积大，可随时从 NCBI 取回）
+#   参考文献基因组 NC_004663.1 约 6.1 MB
+#   用户放入的 BtVPI5482.gb 约 14.5 MB
+data/*.fasta
+data/*.gb
+data/*.gbk
+
+# 基因组缓存：体积大、可随时从 NCBI 取回，不提交
+testdata/*.gb
+testdata/*.gbk
+# 但示例用的小基因组要**保留**（59 KB，用于自检与按基因名定位的演示）。
+# 否定规则必须写在**排除规则之后** —— 顺序反了不生效（实测确认）。
+!testdata/mini.gb
+
+# 旧版完整 README（内容已拆分到 USER_GUIDE / RELEASE / VERIFICATION）
+README_full.md
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
