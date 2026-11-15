@@ -305,17 +305,33 @@ def build_construct_map(spec: ConstructSpec, backbone_seq: str,
             "都会被新 cargo 取代。**此后无法再用氯霉素筛选**，"
             "须另设筛选手段（如报告基因、营养缺陷互补）。")
     else:
-        default_site = spec.site_named("after_le")
+        # 默认 = **保留氯霉素筛选**的路线（v0.0.6 修正）
+        #
+        # ⚠️ 早期默认取 `after_le`（8,590–9,784）—— 该区间**包含 CmR**，
+        #    用它会删掉筛选盒；而本分支又硬编码了一句「✅ 保留氯霉素筛选」，
+        #    于是同一份报告里同时出现「保留」与「会移除」，结论相反，
+        #    也与模块文档「策略 A：keep_cmr（默认）保留筛选」矛盾。
+        #
+        #    现在：默认取 `after_selection`；拿不到才退到 LE 与筛选盒之间的空档。
+        #    「CmR 会不会被切掉」**只由下方 L341 附近那一处判定**统一回答，
+        #    这里不再自己写结论，避免两处各说一套。
+        default_site = spec.site_named("after_selection")
         if default_site is not None:
             site = default_site
             edit_start, edit_end = default_site.region
             strategy = f"site:{default_site.id}"
+            warnings.append(
+                f"📍 **插入位点**：{default_site.label}（{default_site.id}）"
+                f" —— 区间 {edit_start:,}–{edit_end:,}"
+                f"（未指定 `--site` 时的默认值）")
+            if default_site.note:
+                warnings.append(f"    位点说明：{' '.join(default_site.note.split())}")
         else:
             edit_start, edit_end = spec.gap_between_le_and_selection()
-        sel = f"{cm[0]:,}–{cm[1]:,}" if cm else "?"
-        warnings.append(
-            f"✅ **保留氯霉素筛选**：新 cargo 插在 LE 之后（{le_end:,}）、"
-            f"筛选盒 PcfxA-CmR（{sel}）之前。CmR 不受影响。")
+            strategy = "default_gap"
+            warnings.append(
+                f"📍 **插入位点**：LE 与筛选盒之间的空档 —— "
+                f"区间 {edit_start:,}–{edit_end:,}")
 
     # ---- 区间内已有元件：只作**提示**，不当作长度上限 ----
     #

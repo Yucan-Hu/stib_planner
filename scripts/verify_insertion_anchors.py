@@ -157,6 +157,32 @@ try:
 except ValueError as exc:
     check("LE" in str(exc), "坐标落在 LE 之前被硬拒", str(exc).splitlines()[0][:60])
 
+# ── H. 默认路线的 CmR 结论必须唯一且正确（v0.0.6 修复的 P0）──
+print("\n[H] 不给 --site 时的默认路线（不能自相矛盾）")
+cm_d, plan_d, warns_d = build_construct_map(
+    spec, seq, feats, cargo=cargo, cargo_name=cname)
+joined_d = " ".join(warns_d)
+check(sch is not None, "默认调用能生成方案")
+check(plan_d.scheme is not None and plan_d.scheme["edit_start"] == 8866,
+      "默认位点是 after_selection（8,866–8,888）",
+      f"实际 {plan_d.scheme['edit_start'] if plan_d.scheme else '?'}")
+check(any(f.name == "CmR" for f in cm_d.features),
+      "默认路线**保留** CmR")
+say_keep = "CmR 完好" in joined_d or "保留氯霉素筛选" in joined_d
+say_cut = "移除 CmR" in joined_d or "失去氯霉素筛选" in joined_d
+check(say_keep and not say_cut, "默认路线只说「保留」、不说「移除」",
+      f"保留={say_keep} 移除={say_cut}")
+print(f"    CmR 相关结论：{'保留' if say_keep else '—'}；自相矛盾={say_keep and say_cut}")
+
+# 显式选 after_le 时必须说「移除」，且不能再出现「完好」
+cm_l, plan_l, warns_l = build_construct_map(
+    spec, seq, feats, cargo=cargo, cargo_name=cname, site_id="after_le")
+joined_l = " ".join(warns_l)
+check(not any(f.name == "CmR" for f in cm_l.features), "after_le 确实移除 CmR")
+check("移除 CmR" in joined_l, "after_le 明确报告会移除 CmR")
+check("CmR 完好" not in joined_l, "after_le 不再出现「CmR 完好」",
+      "仍含「CmR 完好」" if "CmR 完好" in joined_l else "")
+
 # ── 汇总 ──
 print("\n" + "=" * 74)
 width = max(len(n) for _, n, _ in rows)

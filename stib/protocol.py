@@ -235,27 +235,30 @@ def render_protocol(plan: Any, kb: Any, *, species: str | None = None) -> str:
              "直接进 §4 接合。\n")
     L.append("> 出处：SOP §B.2（表 5 / 表 6 / 表 7）\n")
 
-    L.append("\n### B.2-1 Gibson 用引物（**共 4 条，全部要下单**）\n")
-    L.append("三片段组装需要 **4 条**引物：2 条扩增 cargo、2 条扩增载体。"
+    L.append("\n### B.2-1 Gibson 用引物（三片段 **共 6 条**，全部要下单）\n")
+    L.append("**GA725 与 GA778 不是一对引物。** 三片段两两配对：\n"
+             "Fragment 1 = GA725 + Cargo1；Fragment 2 = cargo；Fragment 3 = GA778 + Frag3_R。\n"
              "**只订 cargo 引物做不出构建** —— 这是最常见的漏订。\n")
-    L.append("\n**① 载体扩增引物（固定 2 条，来自构建规范 / SOP 表）**\n")
-    L.append("| 名称 | 序列 (5'→3') | 长度 | Tm≈ | 产物 | 用途 |\n")
-    L.append("|---|---|---|---|---|---|\n")
-    L.append("| GA725 | `GACCAGTGTCTTGTGTCTCTTC` | 22 | 57 | 6,986 bp | "
-             "Fragment 1：STIB 酶 + LE（正向） |\n")
-    L.append("| GA778 | `GTGGCCTATcaagattacccg` | 21 | 58 | 3,076 bp | "
-             "Fragment 3：RE + PcfxA + CmR + 骨架（反向） |\n")
-    L.append("\n> ⚠️ **GA778 序列含小写段** —— SOP 表用大小写区分「同源臂 / 退火段」，"
-             "下单前按 SOP 核对大小写含义，不要直接照抄。\n")
-    L.append("> Tm 与产物长度引自构建规范，**不是本工具估算**。\n")
-    L.append("\n**② cargo 引物（2 条，随 cargo 序列而变）**\n")
+    L.append("\n**① 载体侧 4 条（前 3 条是 SOP 原引物；Frag3_R 由位点推导）**\n")
+    L.append("| 引物 | 序列 (5'→3') | 长度 | 片段 | 说明 |\n")
+    L.append("|---|---|---|---|---|\n")
+    L.append("| **GA725** | `GACCAGTGTCTTGTGTCTCTTC` | 22 | F1 正向 | SOP 原引物，5' 端在 1,904 |\n")
+    L.append("| **Cargo1** | `ACATGCAACTGTCTAGAATGCGAG` | 24 | F1 反向 | SOP 原引物，3' 端在 8,866 |\n")
+    L.append("| **GA778** | `GTGGCCTATCAAGATTACCCG` | 21 | F3 正向 | SOP 原引物，5' 端在 8,888 |\n")
+    L.append("| **Frag3_R** | `GAAGAGACACAAGACACTGGTCCCA` | 25 | F3 反向 | "
+             "**推导引物**：与 GA725 的 5' 端共享 J3 同源区（环化用） |\n")
+    L.append("\n> ⚠️ **Frag3_R 不是 SOP 原引物，且随插入位点变化** —— 上面的序列只对"
+             "默认位点（8,866–8,888）成立。换位点请用 `stib_cargo_assembly` 重新生成，"
+             "并核对它的 3' 端在载体上唯一。\n")
+    L.append("> ⚠️ GA778 在 SOP 表里写作 `GTGGCCTATcaagattacccg`（小写区分同源臂/退火段）；"
+             "本载体整条与模板一致，**按大写下单即可**。\n")
+    L.append("> Tm 为估算值或 SOP 表值，首次使用须梯度 PCR 确认。\n")
+    L.append("\n**② cargo 侧 2 条（随 cargo 序列而变）**\n")
     L.append("- 5' 同源臂取自 **Fragment 1 的 3' 末端** 与 **Fragment 3 的 5' 开头**，"
-             "overlap 建议 22 bp（NEB 推荐 15–25）。\n")
-    L.append("- 用 `stib_cargo_assembly` 自动设计 —— 它会同时列出 GA725 / Cargo1 / "
-             "GA778，并输出可下单引物、特异性检查与 SnapGene 图谱。\n")
-    L.append("> 注：Cargo1 与 GA778 是**扩增载体片段**用的引物（分别与 GA725、Frag3_R 配对），"
-             "不参与新 cargo 的替换，不要与 cargo 引物混用。\n")
-    L.append("> ⚠️ **插入位点的左右边界就是 Cargo1 的 3' 端与 GA778 的 5' 端**；"
+             "overlap 22 bp（NEB 推荐 15–25）。\n")
+    L.append("- 用 `stib_cargo_assembly` 生成 —— 它会一次给出 **6 条引物**、"
+             "**引物特异性检查**与 **3 处同源区（J1/J2/J3）比对**，并输出 SnapGene 图谱。\n")
+    L.append("> ⚠️ **插入位点的左右边界就是 Cargo1 的 3' 端（8,866）与 GA778 的 5' 端（8,888）**；"
              "用别的坐标可能落进重复区，导致引物有多个结合位点。\n")
 
     L.append("\n### B.2-2 高保真 PCR 扩增\n")

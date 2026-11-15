@@ -1,6 +1,6 @@
 {
   "name": "dsh-stib-planner",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "STIB Planner for DSH — 拟杆菌 STIB 基因编辑方案生成器。位点决策 / 全基因组脱靶评估 / sgRNA 与引物设计 / 风险提示 / 批量设计。",
   "type": "module",
   "main": "lib/index.js",

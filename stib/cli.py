@@ -950,8 +950,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="从槽位两侧取多少 bp 作为 overlap 依据")
     sp.add_argument("--site",
                     help="预设插入位点 id（见 cargo_slot.sites）；"
-                         "默认 after_le。这只是**捷径** —— "
-                         "想指定别的落点用 --anchor-left/--anchor-right")
+                         "默认 after_selection（保留氯霉素筛选）。"
+                         "这只是**捷径** —— 想指定别的落点用 "
+                         "--anchor-left/--anchor-right")
     sp.add_argument("--cargo-strand", type=int, choices=[1, -1],
                     help="cargo 所在链；-1 = 与 CmR 同向（cargo 需表达时建议）")
     sp.add_argument("--list-sites", action="store_true", help="只列出可选插入位点")

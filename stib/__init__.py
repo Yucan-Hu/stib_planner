@@ -10,6 +10,6 @@ STIB Planner — 拟杆菌 STIB 基因编辑方案生成器（Demo-0）。
         --gene tdk --motif ATTCGGAAGAAGACGTGGTATCA --out plan_tdk.md
 """
 
-__version__ = "0.0.5"
+__version__ = "0.0.6"
 
 __all__ = ["knowledge", "sequence", "planner", "render", "cli"]
