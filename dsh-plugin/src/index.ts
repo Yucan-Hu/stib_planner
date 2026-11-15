@@ -36,7 +36,9 @@
  * 这些错误在真实 DSH 中会**直接抛错或静默拿到空输出**。已在 v0.2 全部修正。
  */
 
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -47,30 +49,45 @@ import type {} from '@deepseek-ai/dsh-subprocess'
 export const name = 'stib-planner'
 export const inject = ['tools', 'subprocess']
 
+/**
+ * 插件包根目录（`lib/index.js` 的上一级）。
+ *
+ * 打包时 Python 代码被复制到包内 `stib/`，所以这里同时就是
+ * `python -m stib.cli` 的工作目录 —— **不需要用户配置路径**。
+ * 用 `import.meta.url` 推导，装到任何机器、任何目录都成立。
+ */
+const PLUGIN_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+
+/** 插件自带的 Python 包所在目录（`python -m stib.cli` 的 cwd）。 */
+const BUNDLED_PYTHON_DIR = PLUGIN_ROOT
+
+/** 最低可用 Python 版本。3.9 会在 CLI 启动时直接失败。 */
+const MIN_PYTHON: readonly [number, number] = [3, 10]
+
 /** 插件配置。 */
 export interface Config {
-  /** Python 解释器路径（绝对路径，或 PATH 上的名字）。 */
-  python: string
   /**
-   * stib-planner 代码所在目录。
-   *
-   * 留空（默认 `.`）时使用**插件自带的 Python 包**（包内 `stib_dist/`），
-   * 无需另外安装 Python 代码。
-   * 若你另有本地副本，指向其父目录即可（其下应有 `stib/`）。
+   * Python 解释器（绝对路径，或 PATH 上的名字）。**留空即自动探测**：
+   * 依次尝试 `python3`、`python`、DSH 自带的运行时，取第一个 3.10+ 的。
    */
-  plannerDir: string
-  /** 基因组 FASTA 缓存目录；缺省为 `<plannerDir>/data`。 */
+  python?: string
+  /**
+   * `stib/` 所在目录。**留空即使用插件自带的包**（`<插件目录>/stib`）。
+   * 仅当你想改用仓库里的另一份 Python 代码时才需要设置。
+   */
+  plannerDir?: string
+  /** 基因组缓存目录；缺省为 `<plannerDir>/data`。 */
   dataDir?: string
-  /** 单次调用的宽限/超时（毫秒）。同时用作 spec.graceMs。 */
+  /** 单次调用的超时（毫秒）。同时用作 spec.graceMs。 */
   timeoutMs?: number
   /** 收集输出的内存上限（字节）。超出保留**尾部**。 */
   maxOutputBytes?: number
 }
 
 export const Config: z<Config> = z.object({
-  python: z.string().default('python'),
-  plannerDir: z.string().default('.'),
-  dataDir: z.string(),
+  python: z.string().default(''),
+  plannerDir: z.string().default(''),
+  dataDir: z.string().default(''),
   timeoutMs: z.number().default(180000),
   maxOutputBytes: z.number().default(1_048_576),
 })
@@ -99,9 +116,10 @@ async function runCli(
   const graceMs = config.timeoutMs ?? 180000
   const maxBytes = config.maxOutputBytes ?? 1_048_576
   const plannerDir = resolvePlannerDir(config)
+  const python = await resolvePython(ctx, config)
 
   const handle = ctx.subprocess.spawn({
-    argv: [config.python, '-m', 'stib.cli', ...args],
+    argv: [python, '-m', 'stib.cli', ...args],
     cwd: plannerDir,
     stdio: {
       stdin: 'ignore',
@@ -156,7 +174,7 @@ const GENOME_EXTS = ['.gb', '.gbk', '.gbff', '.genbank', '.fasta', '.fa', '.fna'
  *        - 全都没命中 → 报错并列出找过的路径，而不是静默拼一个 `.fasta`
  */
 function resolveGenome(config: Config, accession: string): string {
-  const dataDir = config.dataDir ?? `${resolvePlannerDir(config)}/data`
+  const dataDir = resolveDataDir(config)
   const a = accession.trim()
 
   // 1) 绝对路径
@@ -208,16 +226,115 @@ function failText(r: CliResult): string {
 }
 
 /**
- * plannerDir 必须**直接含 `stib/` 子目录** —— 因为运行方式是
- * `python -m stib.cli`，包名即目录名，中隔一层会 ModuleNotFoundError。
+ * `stib/` 所在目录 —— 运行方式是 `python -m stib.cli`，包名即目录名，
+ * 所以该目录**必须直接含 `stib/`**，中隔一层会 ModuleNotFoundError。
  *
- * 两种部署形态都满足这一点：
- *   1. **开发/本地**：指向仓库根，其下就是 `stib/`
- *   2. **npm 包**：打包时把 Python 代码放进包内 `stib/`，
- *      用户把 plannerDir 指向插件安装目录即可，无需另装 Python 代码。
+ * 默认就是插件包根目录：打包时 Python 代码被复制进包内 `stib/`，
+ * 因此**装到任何机器都无需配置**。只有想改用仓库里另一份代码时才需要覆盖。
  */
 function resolvePlannerDir(config: Config): string {
-  return config.plannerDir
+  const configured = (config.plannerDir ?? '').trim()
+  if (configured && fileExists(join(configured, 'stib', 'cli.py'))) return configured
+  return BUNDLED_PYTHON_DIR
+}
+
+/** 基因组缓存目录。默认放在插件目录下的 `data/`。 */
+function resolveDataDir(config: Config): string {
+  const configured = (config.dataDir ?? '').trim()
+  return configured || join(BUNDLED_PYTHON_DIR, 'data')
+}
+
+/**
+ * 候选 Python 解释器，按优先级排列。
+ *
+ * 显式配置时**只用它** —— 用户说了算，失败也要报清楚，不能悄悄换一个。
+ * 否则依次尝试：PATH 上的 `python3` / `python`，再到 DSH 自带运行时。
+ *
+ * ⚠️ 为什么必须探测而不是直接用 `python`：Windows 上 PATH 里的 `python`
+ *    可能是 3.9（本机实测就是），而 CLI 需要 3.10+，直接跑会莫名失败。
+ *    而 DSH 自带 3.12 —— 用户机器上很可能只有这个能用。
+ */
+function pythonCandidates(config: Config): string[] {
+  const explicit = (config.python ?? '').trim()
+  if (explicit) return [explicit]
+
+  const list = ['python3', 'python']
+
+  // DSH 自带运行时：<DSH_HOME>/dsh-runtimes/<runtime>/dependencies/python/python(.exe)
+  // 运行时目录名随发行版变化，所以枚举而不是写死。
+  const home = process.env.DSH_HOME
+  if (home) {
+    for (const exe of ['python.exe', 'bin/python3', 'python']) {
+      try {
+        for (const d of readdirSync(join(home, 'dsh-runtimes'))) {
+          const p = join(home, 'dsh-runtimes', d, 'dependencies', 'python', exe)
+          if (fileExists(p)) list.push(p)
+        }
+      } catch {
+        // 没有 dsh-runtimes 目录就跳过
+      }
+    }
+  }
+
+  return [...new Set(list)]
+}
+
+/** 探测成功的解释器缓存（避免每次调用都探测）。 */
+let resolvedPython: string | undefined
+
+/** 用 `-c` 探一次版本，够新才算通过。 */
+async function probePython(
+  ctx: Context,
+  candidate: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const probe = `import sys; sys.exit(0 if sys.version_info >= (${MIN_PYTHON[0]}, ${MIN_PYTHON[1]}) else 7)`
+  try {
+    const handle = ctx.subprocess.spawn({
+      argv: [candidate, '-c', probe],
+      cwd: BUNDLED_PYTHON_DIR,
+      stdio: { stdin: 'ignore', stdout: 'inherit', stderr: 'inherit' },
+      graceMs: 15000,
+      signal,
+    })
+    const timer = setTimeout(() => handle.terminate(), 15000)
+    try {
+      const outcome = await handle.done
+      return outcome.exitCode === 0
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    return false
+  }
+}
+
+/** 解析出可用的 Python 解释器（带缓存）。 */
+async function resolvePython(
+  ctx: Context,
+  config: Config,
+  signal?: AbortSignal,
+): Promise<string> {
+  const explicit = (config.python ?? '').trim()
+  if (explicit) return explicit          // 用户显式指定：不探测、不替换
+  if (resolvedPython) return resolvedPython
+
+  const tried: string[] = []
+  for (const candidate of pythonCandidates(config)) {
+    tried.push(candidate)
+    if (await probePython(ctx, candidate, signal)) {
+      resolvedPython = candidate
+      return candidate
+    }
+  }
+
+  throw new Error(
+    `找不到 Python ${MIN_PYTHON[0]}.${MIN_PYTHON[1]}+ 解释器，已尝试：\n` +
+    tried.map((t) => `  - ${t}`).join('\n') +
+    `\n\n请在插件配置里显式指定，例如：\n` +
+    `  python: C:\\\\path\\\\to\\\\python.exe\n` +
+    `（Windows 上可用 \`py -3.12\` 或 DSH 自带的运行时。）`,
+  )
 }
 
 export function apply(ctx: Context, config: Config): void {

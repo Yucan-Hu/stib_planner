@@ -1,9 +1,13 @@
 # dsh-stib-planner — bundle 层
 #
-# 已按本机实际路径填好。部署到其他机器时改这三项即可：
-#   python     —— Python 解释器（绝对路径或 PATH 上的名字）
-#   plannerDir —— stib-planner 包目录（其下应有 stib/ 子目录）
-#   dataDir    —— 基因组 FASTA 缓存目录
+# ★ 默认**不需要任何配置**：Python 代码随包发布在 `stib/`，
+#   插件用 `import.meta.url` 自定位；Python 解释器也会自动探测
+#   （PATH 上的 python3/python，再到 DSH 自带的运行时，取第一个 3.10+）。
+#
+# 只有下面这些情况才需要取消注释并填写：
+#   - 想指定某个解释器（例如机器上装了多个 Python）
+#   - 想改用仓库里的另一份 Python 代码（其下应有 `stib/`）
+#   - 想把基因组缓存放到别处
 #
 # 契约要点（依据官方 bundle 层文档）：
 #   - 顶层是 YAML 数组
@@ -15,13 +19,8 @@
     - id: stib-planner
       name: dsh-stib-planner
       config:
-        # ⚠️ 以下三项**必须按你的机器修改**（这是占位符，不是可用值）。
-        #    python     : Python 3.10+ 的绝对路径（或 PATH 上的 python / python3）
-        #    plannerDir : 插件安装目录 —— 其下应有 stib/ 子目录
-        #                 （npm 包自带了 Python 代码，所以指向插件目录即可）
-        #    dataDir    : 基因组缓存目录（可留空，默认 plannerDir/data）
-        python: python
-        plannerDir: /绝对路径/to/dsh-plugin
-        dataDir: /绝对路径/to/dsh-plugin/data
+        # python: python3
+        # plannerDir: /path/to/dir-containing-stib
+        # dataDir: /path/to/genome-cache
         timeoutMs: 300000
         maxOutputBytes: 2097152

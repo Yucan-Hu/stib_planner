@@ -8,7 +8,7 @@
 ## 1. 好消息：插件层第一次通过了真实编译
 
 v0.1 的插件代码是**纯猜测**的。v0.2 依据**官方真实契约**重写后，用 npm 上真实存在的
-`0.2.0-rc.2` 类型定义编译，结果：
+`0.2.2-rc.3` 类型定义编译，结果：
 
 ```
 npm install               →  26 packages
@@ -40,7 +40,7 @@ default 导出存在: false                  ← 符合官方 AGENTS.md 的 bund
 | 等退出 | `handle.exited` | **`handle.done: Promise<SubprocessOutcome>`** → `.exitCode` |
 | 超时 | 未处理 | 契约的 `graceMs` **不是 deadline**，只作用于 terminate 流程 → 须自己起定时器调 `terminate()` |
 
-**依据**：`@deepseek-ai/dsh-subprocess/src/types.ts`（官方仓库，v0.2.0-rc.2）。
+**依据**：`@deepseek-ai/dsh-subprocess/src/types.ts`（`0.2.2-rc.3`，已复核契约未变）。
 `src/index.ts` 顶部完整抄录了该契约，便于日后核对。
 
 ---
@@ -51,7 +51,7 @@ default 导出存在: false                  ← 符合官方 AGENTS.md 的 bund
 |---|---|
 | `src/index.ts` 按真实契约重写 | ✅ 编译通过 |
 | 9 个工具（plan / find_sgrnas / offtarget / batch / open_questions / selftest / find_gene / neutral_sites / cargo_assembly） | ✅ |
-| `Config`（schemastery：`python` / `plannerDir` / `dataDir` / `timeoutMs` / `maxOutputBytes`） | ✅ |
+| `Config`（schemastery：`python?` / `plannerDir?` / `dataDir?` / `timeoutMs` / `maxOutputBytes`，前三项留空即自动） | ✅ |
 | `tsconfig.json` + `npm run build`（tsc） | ✅ |
 | `cordis.patch.yml`（bundle 层，含显式 `id`） | ✅ 需填绝对路径 |
 | `SKILL.md`（面向无经验课题组） | ✅ |
@@ -114,19 +114,37 @@ default 导出存在: false                  ← 符合官方 AGENTS.md 的 bund
 
 ## 4. 版本兼容：最容易踩的坑
 
-DSH 的兼容性检查**只看 `peerDependencies`**（`engines.dsh` 不生效）。
-运行时是**预发布版**，普通 caret 范围**匹配不上预发布版** ——
-不匹配时插件行会被**静默拒绝**（`incompatible-version`），
-表现为「装了但什么都没发生」。
+**规则（自 DSH `0.2.1-alpha.3` 起）**：先读包自身的 `engines.dsh`；
+没有才回退到 `@deepseek-ai/dsh-*` 的 `peerDependencies`。本包不声明
+`engines.dsh`，走 peer 规则。不匹配时插件行被拒绝，表现为「装了但没反应」。
 
-本包因此精确锁死：
+当前声明（对应 DSH `0.2.2-rc.3`）：
 
 ```json
-"@deepseek-ai/cordis": "4.0.4",
-"@deepseek-ai/dsh-tools": "0.2.0-rc.2",
-"@deepseek-ai/dsh-subprocess": "0.2.0-rc.2",
-"@deepseek-ai/schemastery": "3.18.4"
+"@deepseek-ai/cordis": "~4.1.0",
+"@deepseek-ai/dsh-tools": "^0.2.2-rc.3",
+"@deepseek-ai/dsh-subprocess": "^0.2.2-rc.3",
+"@deepseek-ai/schemastery": "~3.19.0"
 ```
+
+### 从 `0.2.0-rc.2` 升到 `0.2.2-rc.3` 的实际记录（v0.0.2）
+
+只改版本号是**不够**的，必须重新核对 API。本次核对结果：
+
+| 表面 | 结论 |
+|---|---|
+| `SubprocessSpawnSpec` | **未变**。`argv` / `cwd` / `stdio` / `graceMs` / `signal` / `env` 全同；`collected.readFrom` 与 `done` 同样未变 |
+| `ToolDefinition`（含 `defineTool`） | **未变**，仍要求 `output.schema` + `output.render`；本插件本来就是这个形状 |
+| 工具注册 | 未变。`ctx.tools.register` 仍是主入口 |
+| 工具呈现 | 只接受 `native` / `ptc`，本插件不涉及 |
+| Node 下限 | **变了**：`0.2.1-rc.2` 起要求 Node **24.9+**，`engines.node` 已同步 |
+| 兼容性判定 | **变了**：改读 `engines.dsh` 优先（见上） |
+
+**顺带修掉的运行期问题**：旧 `cordis.patch.yml` 把 `python` / `plannerDir`
+写成绝对路径。这在别的机器上是死值，且 Windows 上 PATH 里的 `python`
+可能是 3.9（CLI 需 3.10+）。现已改为**零配置自定位**：
+`plannerDir` 用 `import.meta.url` 指向包内 `stib/`，
+`python` 自动探测（`python3` → `python` → DSH 自带运行时，取第一个 3.10+）。
 
 **升级 DSH 后必须重新核对。** 排查命令：
 

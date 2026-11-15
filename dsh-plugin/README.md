@@ -18,10 +18,10 @@ DeepSeek Harness 插件：**拟杆菌 STIB 基因编辑方案生成器**。
 
 | 依赖 | 说明 |
 |---|---|
-| Node.js `^22.19.0 \|\| >=24.0.0` | DSH 本身的要求 |
-| DSH `0.2.0-rc.2` | 插件 peer 锁此版本，见下方「版本兼容」 |
-| Python 3.10+ | 运行 `stib-planner`（插件通过 `ctx.subprocess` 调用） |
-| `stib-planner` 包 | 需与本插件一并部署，路径由配置项 `plannerDir` 指定 |
+| Node.js `>=24.9.0` | DSH 0.2.1-rc.2 起不再支持 Node 22 |
+| DSH `^0.2.2-rc.3` | 插件 peer 声明；见下方「版本兼容」 |
+| Python 3.10+ | 运行 stib-planner。**无需配置** —— 插件自动探测 |
+| `stib/` Python 包 | **随插件发布**，无需另行部署 |
 
 `stib-planner` 是**纯标准库**实现，无需 pip 安装任何第三方包。
 
@@ -45,26 +45,35 @@ DeepSeek Harness 插件：**拟杆菌 STIB 基因编辑方案生成器**。
 
 ## 配置
 
-在 `cordis.patch.yml` 里改这三项（**必须是绝对路径**）：
+**默认零配置。** `cordis.patch.yml` 里只需保留超时上限：
 
 ```yaml
 - insert:
     - id: stib-planner
       name: dsh-stib-planner
       config:
-        python: /absolute/path/to/python        # 或 PATH 上的 python
-        plannerDir: /absolute/path/to/stib_planner
-        dataDir: /absolute/path/to/stib_planner/data
-        timeoutMs: 180000
-        maxOutputBytes: 1048576
+        timeoutMs: 300000
+        maxOutputBytes: 2097152
 ```
+
+以下三项**都是可选的覆盖项**，只有特殊情形才需要填：
+
+| 配置项 | 默认行为 | 什么时候要填 |
+|---|---|---|
+| `python` | 自动探测：`python3` → `python` → DSH 自带运行时，取第一个 **3.10+** 的 | 机器上有多个 Python，想指定其中一个 |
+| `plannerDir` | **插件包根目录**（其下就是随包发布的 `stib/`） | 想改用仓库里另一份 Python 代码 |
+| `dataDir` | `<插件目录>/data` | 想把基因组缓存放到别处 |
+
+> **为什么要自动探测**：Windows 上 PATH 里的 `python` 可能是 3.9
+> （本机实测就是），而 CLI 需要 3.10+，直接用会莫名失败。
+> DSH 自带运行时是 3.12，所以把它列入候选。
 
 **工具里的 `accession` 参数支持三种写法**：
 
 | 写法 | 例子 | 解析方式 |
 |---|---|---|
 | 完整路径 | `E:\lab\genomes\BT.gb` | 原样使用 |
-| 相对路径 | `testdata/mini.gb` | 相对 `plannerDir` |
+| 相对路径 | `testdata/mini.gb` | 相对插件包目录 |
 | 裸 accession | `NC_004663.1` | 在 `dataDir` 下按 `.gb/.gbk/.gbff/.fasta/.fa/.fna/.fas` 依次探测 |
 
 ⚠️ 早期版本对任何输入都硬拼 `.fasta`，导致 `.gb` 路径完全不可达
@@ -75,24 +84,37 @@ DeepSeek Harness 插件：**拟杆菌 STIB 基因编辑方案生成器**。
 
 ## ⚠️ 版本兼容：这一条最容易踩坑
 
-DSH 的兼容性检查**只看 `peerDependencies`**（`engines.dsh` 不生效）。
-运行时是**预发布版**，普通 caret 范围**匹配不上预发布版** ——
-不匹配时插件行会被**静默拒绝**，表现为「装了但什么都没发生」。
+从 DSH `0.2.1-alpha.3` 起，兼容性判定规则是：
+**先读包自身的 `engines.dsh`，没有才回退到 `@deepseek-ai/dsh-*` 的
+`peerDependencies`**。本插件不声明 `engines.dsh`，走 peer 规则。
 
-因此本包把 peer **精确锁死**：
+当前声明（对应 DSH `0.2.2-rc.3`）：
 
 ```json
 "peerDependencies": {
-  "@deepseek-ai/cordis": "4.0.4",
-  "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
-  "@deepseek-ai/dsh-subprocess": "0.2.0-rc.2",
-  "@deepseek-ai/schemastery": "3.18.4"
+  "@deepseek-ai/cordis": "~4.1.0",
+  "@deepseek-ai/dsh-tools": "^0.2.2-rc.3",
+  "@deepseek-ai/dsh-subprocess": "^0.2.2-rc.3",
+  "@deepseek-ai/schemastery": "~3.19.0"
 }
 ```
 
-**升级 DSH 后必须重新核对这几个版本号。**
-若被拒绝，用 `dsh plugin --profile <p> version-exemptions` 查看，
-再决定是否豁免（豁免有风险，需谨慎）。
+`^0.2.2-rc.3` 覆盖同一 minor（`0.2.x`）内的后续预发布与正式版，
+所以 `0.2.2` 正式版、`0.2.3-rc.1` 都仍可用。
+
+**若被拒绝**（表现为 `plugin list` 出现 `is incompatible with dsh ...`
+且插件不工作）：
+
+```bash
+dsh plugin --profile <p> list          # 看拒绝信息里的 requirements
+```
+
+然后按需二选一：
+- **推荐**：改 `peerDependencies` 到你的 DSH 版本后重新安装；
+- 临时：`dsh plugin --profile <p> allow-version` 豁免（**有崩溃与数据损失风险**）。
+
+升级 DSH 跨 minor（如 `0.2.x` → `0.3.x`）时，**必须重新核对 API**，
+不能只改版本号：`ToolDefinition` 与 `SubprocessSpawnSpec` 都是会变的契约。
 
 ---
 

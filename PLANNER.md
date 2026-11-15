@@ -25,7 +25,7 @@ stib_planner/
 │   ├── fetch_genome.py           分块取回基因组（长度校验）
 │   └── verify_against_paper.py   用论文已发表 sgRNA 验收
 ├── dsh-plugin/                   ← DSH 插件薄壳
-│   ├── package.json              peerDeps 精确锁 0.2.0-rc.2
+│   ├── package.json              peerDeps 指向 DSH ^0.2.2-rc.3
 │   ├── cordis.patch.yml          bundle 层（需填绝对路径）
 │   ├── src/index.ts              5 个 tool
 │   └── skills/stib-bacteroides-editing/SKILL.md   面向无经验课题组
@@ -150,7 +150,7 @@ python -m stib.cli conflicts
 ## 3. 插件挂载（可选，最后做）
 
 ```bash
-# 1) 编辑 dsh-plugin/cordis.patch.yml，把 python / plannerDir / dataDir 改成绝对路径
+# 1) 通常无需编辑 —— 插件自定位 stib/ 并自动探测 Python 3.10+
 # 2) 完全退出 DSH 桌面版
 dsh plugin --profile desktop add <dsh-plugin 的绝对路径>
 # 3) 重开桌面版
@@ -159,14 +159,15 @@ dsh plugin --profile desktop add <dsh-plugin 的绝对路径>
 ### ⚠️ 插件层的两个已知风险
 
 **R1 — peerDependency 版本可能静默失败。**
-`peerDependencies` 是 DSH **唯一真正生效**的兼容性检查（`engines.dsh` 不生效）。
-运行时是预发布版，**普通 caret 范围匹配不上预发布版**，不匹配时插件行会被
-**静默拒绝**（`incompatible-version`），表现是"装了但什么都没发生"。
-本包已把 peer 精确锁到 `0.2.0-rc.2`。**升级 DSH 后需重新核对。**
+DSH 先读 `engines.dsh`、没有再回退到 `peerDependencies`。本包走 peer 规则，
+声明为 `^0.2.2-rc.3`（覆盖同 minor 内的后续预发布与正式版）。
+**跨 minor 升级 DSH 时必须重新核对 API，不能只改版本号。**
 
-**R2 — 插件代码未经执行验证。**
-`src/index.ts` 里的 `ctx.subprocess.spawn` 调用形态**未在真实 DSH 中跑过**。
-若报错，最可能的差异点是 subprocess 的参数名与流读取方式。
+**R2 — 插件代码的验证范围。**
+`ctx.subprocess.spawn` 的调用形态已按 `0.2.2-rc.3` 的真实契约核对，
+并在 `dsh-plugin/smoke-live.mjs` 里用**真实子进程**跑通了
+（`stib_selftest` 返回 ALL PASS、`stib_find_gene` 能按基因名搜到 thrA）。
+**未占用的是**：在 DSH 会话中逐个工具的手工实测，以及非 Windows 平台。
 **Python 侧（步骤 1–7）不受影响，可独立使用。**
 
 ---
