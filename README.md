@@ -230,4 +230,5 @@ genes  neutral  cargo  offtarget
 | 文档 | 内容 |
 |---|---|
 | [USER_GUIDE.md](USER_GUIDE.md) | 面向第一次使用者的对话指导、可直接抄的问法、常见踩坑 |
+| [ROADMAP.md](ROADMAP.md) | **已知未完成的事**：缺陷优先级、平台验证状态、明确不做的清单 |
 | [LICENSE](LICENSE) | MIT |
