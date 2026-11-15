@@ -709,6 +709,67 @@ def cmd_cargo(args: argparse.Namespace) -> int:
         print(f"    退火段(3')  : {pr.anneal}")
         print(f"    Tm 估算     : {pr.tm_full:.1f} °C（全长，估算值）")
 
+    # ⚠️ 三片段组装里，扩增载体的那两条同样要下单；漏了会在 Gibson 前一无所知
+    if plan.vector_primers:
+        print()
+        print(f"=== 载体扩增引物（也必须下单 —— {len(plan.vector_primers)} 条）===")
+        for vp in plan.vector_primers:
+            extra = []
+            if vp.get("tm") is not None:
+                extra.append(f"Tm {vp['tm']}（SOP 表值）")
+            if vp.get("product_size"):
+                extra.append(f"产物 {int(vp['product_size']):,} bp")
+            suffix = f"  [{'; '.join(extra)}]" if extra else ""
+            print(f"  {vp['name']:<8} {vp['seq']}  ({vp['length']} nt)"
+                  f"  {vp.get('description') or ''}{suffix}")
+            if vp.get("has_lowercase"):
+                print("           小写段是 SOP 的「同源臂/退火段」书写习惯；"
+                      "本载体的 GA778 整条与模板一致，按大写下单即可")
+        print("  ⚠️ 只订 cargo 引物做不出三片段组装")
+
+    # ---- 三片段完整引物组 + 同源检查 ----
+    sch = getattr(plan, "scheme", None)
+    if sch:
+        print()
+        print("=== 三片段 Gibson 引物组（共 6 条）===")
+        print("  ⚠️ GA725 / GA778 不是一对：F1=GA725+Cargo1, F2=cargo, F3=GA778+Frag3_R")
+        print(f"  插入位点 {sch['edit_start']:,}–{sch['edit_end']:,}"
+              f"（替换 {sch['edit_end'] - sch['edit_start']} bp），"
+              f"组装后 {sch['total_len']:,} bp")
+        for fr in sch["fragments"]:
+            print(f"  {fr['name']}  ({fr['length']:,} bp)  {fr['desc']}")
+            for pr in fr["primers"]:
+                src_tag = "SOP" if pr.get("from_sop") else "推导"
+                print(f"    {pr['dir']}  {pr['name']:<10} {pr['seq']:<30} "
+                      f"({len(pr['seq'])} nt, Tm {pr['tm']:.1f})  [{src_tag}] {pr['role']}")
+
+        # ---- 特异性：3' 端结合位点数，必须为 1 ----
+        rows = sch.get("specificity") or []
+        if rows:
+            print()
+            print(f"=== 引物特异性（3' 末端 {rows[0]['anchor_len']} nt 的结合位点数，必须为 1）===")
+            print(f"  {'引物':<14}{'模板':<10}{'长度':>4}{'3端位点':>8}{'全长位点':>9}  位置   判定")
+            for row in rows:
+                pos = row["anchor_pos"][0] if row["anchor_pos"] else "—"
+                flag = "OK" if row["verdict"] == "OK" else f"⚠ {row['anchor_sites']} 个位点"
+                print(f"  {row['name']:<14}{row['template']:<10}{row['length']:>4}"
+                      f"{row['anchor_sites']:>8}{row['full_sites']:>9}  {str(pos):<6} {flag}")
+            if any(r["verdict"] != "OK" for r in rows):
+                print("  🔴 有引物不唯一 —— 不要下单。见下方警告。")
+
+        print()
+        print("=== 同源区检查（3 处，必须完全一致）===")
+        for c in sch["checks"]:
+            arm = "臂唯一" if c.get("arm_sites", 1) == 1 else f"⚠ 臂 {c['arm_sites']} 处"
+            print(f"  {'OK ' if c['ok'] else 'FAIL'} {c['junction']}  "
+                  f"({c['len']} bp, GC {c['gc']:.0%}, {arm})")
+            if not c["ok"]:
+                print(f"        左: {c['a']}")
+                print(f"        右: {c['b']}")
+        print(f"  结论: {'全部一致，可按上表下单' if all(c['ok'] for c in sch['checks']) else '存在不一致，先解决再下单'}")
+        if sch.get("overlap_shift"):
+            print(f"  🔧 自动调整: {sch['overlap_shift']}")
+
     print()
     print("=== 图谱（保留骨架全部注释）===")
     print(f"  总长 {len(cm.seq):,} bp；特征 {len(cm.features)} 个；"

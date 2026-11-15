@@ -36,7 +36,7 @@
  * 这些错误在真实 DSH 中会**直接抛错或静默拿到空输出**。已在 v0.2 全部修正。
  */
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -431,6 +431,69 @@ async function resolvePython(
   )
 }
 
+// ---------------------------------------------------------------------------
+// 技能注册：把随包的 skills/<name>/SKILL.md 接入 `ctx.skills`
+// ---------------------------------------------------------------------------
+// `@deepseek-ai/dsh-skill` 的 SkillRegistry 提供 `register(skill)`，注册的是
+// **runtime skill**（rank 250，弱于 project/bundled 层的同名技能，不会抢别人的名字）。
+//
+// 该包不是本插件的依赖，故用结构化接口本地声明，避免为一个 type-only 用法新增
+// package 依赖；`skills` 是**可选服务**，调用点用 `ctx.inject(['skills'], ...)` 包裹，
+// 于是没有该服务的 profile 里 9 个工具照常工作，只是技能不出现。
+
+/** `ctx.skills` 的最小结构（只用到 `register`）。 */
+interface SkillRegistrar {
+  register(skill: {
+    name: string
+    description: string
+    whenToUse?: string
+    content: string
+    source: string
+    resourceBase?: { readonly kind: 'directory'; readonly path: string }
+  }): () => void
+}
+
+/**
+ * 拆分 SKILL.md 的 YAML frontmatter。
+ *
+ * 只需要平铺的 `key: value`（本仓库的 SKILL.md 即此形式）；不做通用 YAML 解析，
+ * 以免为一处用法引入解析器。找不到 frontmatter 时整个文件都算正文。
+ */
+function splitFrontmatter(raw: string): { meta: Record<string, string>; body: string } {
+  const text = raw.replace(/^\uFEFF/, '')
+  const match = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?/.exec(text)
+  if (match === null || match[1] === undefined) return { meta: {}, body: text }
+  const meta: Record<string, string> = {}
+  for (const line of match[1].split(/\r?\n/)) {
+    const kv = /^([A-Za-z][A-Za-z0-9_-]*)[ \t]*:[ \t]*(.*)$/.exec(line)
+    if (kv !== null && kv[1] !== undefined) meta[kv[1]] = (kv[2] ?? '').trim()
+  }
+  return { meta, body: text.slice(match[0].length) }
+}
+
+/** 注册随包技能；任何失败都只少一个技能，不影响工具。 */
+function registerBundledSkill(ctx: Context): void {
+  const registrar = (ctx as unknown as { skills?: SkillRegistrar }).skills
+  if (registrar === undefined || typeof registrar.register !== 'function') return
+  const dir = join(PLUGIN_ROOT, 'skills', 'stib-bacteroides-editing')
+  const file = join(dir, 'SKILL.md')
+  if (!existsSync(file)) return
+  try {
+    const { meta, body } = splitFrontmatter(readFileSync(file, 'utf8'))
+    registrar.register({
+      name: meta['name'] ?? 'stib-bacteroides-editing',
+      description: meta['description']
+        ?? '帮无经验的课题组完成拟杆菌（Bacteroides）的 STIB 基因编辑：sgRNA 设计、脱靶评估、引物、接合流程与排查。',
+      ...(meta['whenToUse'] === undefined ? {} : { whenToUse: meta['whenToUse'] }),
+      content: body,
+      source: 'bundled',
+      resourceBase: { kind: 'directory', path: dir },
+    })
+  } catch {
+    // 技能注册失败不得影响 9 个工具。
+  }
+}
+
 export function apply(ctx: Context, config: Config): void {
   // ---- tool 1: 生成完整编辑方案 ----
   ctx.tools.register(defineTool({
@@ -730,6 +793,8 @@ export function apply(ctx: Context, config: Config): void {
     name: 'stib_cargo_assembly',
     description:
       '为插入 cargo 设计 Gibson 组装引物，并输出可在 SnapGene 打开的图谱文件。'
+      + '**三片段组装共需 6 条引物**：F1 = GA725 + Cargo1、F2 = cargo、F3 = Cargo2 + GA778'
+      + '（GA725 与 GA778 **不是一对**），并逐 junction 检查三处同源区（J1/J2/J3）。'
       + '**硬性校验 cargo 是否落在转座子 LE 与 RE 之间** —— 放错位置会破坏转座子末端识别'
       + '（转座失败，而 PCR、Gibson、菌落 PCR 全都正常，直到接合才发现转化子为零）。'
       + '同时检查 cargo 内的 BsaI 位点（会干扰本载体的 Golden Gate 换 sgRNA）。'
@@ -775,4 +840,23 @@ export function apply(ctx: Context, config: Config): void {
       return { ok: r.ok, content: r.ok ? r.stdout : failText(r) }
     },
   }))
+
+  // ---- 技能：让随包的 SKILL.md 进入技能目录 ----
+  // 用 ctx.inject 而不是加进模块级 inject：skills 缺失时本插件仍应正常提供 9 个工具。
+  //
+  // ⚠️ 防御：`ctx.inject` 是 cordis 的可选服务注入 API。极少数精简宿主
+  //    （以及冒烟测试的 mock ctx）没有它 —— 此时**只少一个技能**，
+  //    9 个工具必须照常注册，不能让整个 apply() 抛错。
+  const injectFn = (ctx as unknown as {
+    inject?: (deps: string[], cb: (c: Context) => void) => unknown
+  }).inject
+  if (typeof injectFn === 'function') {
+    try {
+      injectFn.call(ctx, ['skills'], (scoped: Context) => {
+        registerBundledSkill(scoped)
+      })
+    } catch {
+      // 技能通道不可用时静默降级
+    }
+  }
 }

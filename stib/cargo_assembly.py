@@ -9,10 +9,12 @@ STIB Planner — cargo 插入的完整组装方案（v0.7）。
          ↑ 新 cargo 插在这里
 
   做法（SOP 的两对引物）：
-     片段1 = GA725 / CARGO1   （酶 … LE … 至 cargo 5' 端）
-     片段2 = cargo 本身
-     片段3 = GA778 / CARGO2   （cargo 3' 端 … RE … PcfxA … CmR … 骨架）
+     片段1 = GA725 + Cargo1   （酶 … LE … 至插入位点**左**边界 8,866）
+     片段2 = cargo 本身（两侧带同源臂）
+     片段3 = GA778 + Frag3_R  （插入位点**右**边界 8,888 … RE … PcfxA … CmR … 骨架）
   → CmR 留在片段3 里，**仍可用氯霉素筛选**。
+  ★ 插入位点的左右边界由 **Cargo1 的 3' 端**与 **GA778 的 5' 端**确定，
+    不是任意坐标；取到重复区会让引物出现双结合位点。
 
 **策略 B：replace_selection —— 连 CmR 表达框一起换掉**
 
@@ -40,7 +42,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from .cargo import AssemblyPlan, check_cargo, design_assembly_primers
+from .cargo import (AssemblyPlan, build_3fragment_scheme, check_cargo,
+                    design_assembly_primers)
 from .sequence import revcomp
 from .construct import (ConstructSpec, features_from_snapgene,
                         features_to_construct_map, shift_features)
@@ -196,8 +199,31 @@ def build_construct_map(spec: ConstructSpec, backbone_seq: str,
 
     plan = design_assembly_primers(
         inserted, upstream_3prime=up3, downstream_5prime=dn5,
-        cargo_name=cargo_name, overlap_len=overlap_len)
+        cargo_name=cargo_name, overlap_len=overlap_len,
+        vector_primers=getattr(spec, "primers", None))
     warnings.extend(plan.warnings)
+
+    # ---- 三片段 Gibson：完整 6 条引物 + 三处同源区检查 ----
+    # ⚠️ 配对：GA725 + Cargo1（Fragment 1）、GA778 + Frag3_R（Fragment 3）。
+    #    插入位点两端就是 Cargo1 的 3' 端与 GA778 的 5' 端 —— 不能随手取，
+    #    取错会让 F3 被迫另设正向引物，而该区常常不唯一（见 construct_psh43.yml）。
+    try:
+        ga = (getattr(spec, "primers", None) or {}).get("GA725") or {}
+        plan.scheme = build_3fragment_scheme(
+            backbone_seq, edit_start, edit_end, inserted,
+            ga725_start=int(ga.get("anneal_pos") or 1904),
+            overlap_len=overlap_len, cargo_name=cargo_name,
+            ga725_seq=str(ga.get("seq") or "").strip() or None,
+            known=getattr(spec, "primers", None))
+        warnings.extend(plan.scheme["warnings"])
+    except Exception as exc:  # 设计失败不应让整份方案崩溃
+        warnings.append(
+            f"⚠️ 三片段引物设计失败：{exc}\n"
+            f"  这只影响**载体片段的扩增引物**，cargo 本身的引物仍然有效。\n"
+            f"  常见原因：该边界落在重复区（本载体的 LE/RE、rrnB 终止子、"
+            f"CmR 附近都有重复），使 3' 端在模板上不唯一。\n"
+            f"  建议：① 改用 `after_selection` 位点（边界由 Cargo1 / GA778 决定，"
+            f"已实测唯一）；② 或人工设计该端的引物后自行核对特异性。")
 
     # ---- 拼接新序列 ----
     new_seq = backbone_seq[:edit_start] + inserted + backbone_seq[edit_end:]
@@ -265,6 +291,7 @@ def cargo_report(spec: ConstructSpec, cm, plan: AssemblyPlan,
             L.append(f"- ❌ {e}\n")
 
     L.append("\n## 2. 组装引物（可直接下单）\n")
+    L.append("### 2.1 cargo 引物（2 条）\n")
     L.append("| 名称 | 序列 (5'→3') | 长度 | overlap (5') | 退火段 (3') | Tm 估算 |\n")
     L.append("|---|---|---|---|---|---|\n")
     for p in plan.primers:
@@ -272,6 +299,94 @@ def cargo_report(spec: ConstructSpec, cm, plan: AssemblyPlan,
                  f"`{p.anneal}` | {p.tm_full:.1f} °C |\n")
     L.append("\n> Tm 为 **估算值**（Wallace 修正式），首次使用须梯度 PCR 确认。\n")
     L.append("> 反向引物 5' 端是下游 overlap 的**反向互补** —— 手工设计最易搞反。\n")
+
+    # ---- 2.2 载体扩增引物：三片段组装的另两条，最容易漏订 ----
+    if plan.vector_primers:
+        n_vp = len(plan.vector_primers)
+        L.append(f"\n### 2.2 SOP 记录的载体引物（{n_vp} 条）\n")
+        L.append("⚠️ **它们不是一对。** SOP 是三片段组装：\n"
+                 "- **GA725 + Cargo1** 扩增 Fragment 1（Cargo1 是反向引物，3' 端落在 8,866）\n"
+                 "- **GA778 + Frag3_R** 扩增 Fragment 3（GA778 是正向引物，5' 端落在 8,888）\n\n"
+                 "**插入位点的左右边界就是由这两条决定的**（8,866 与 8,888），"
+                 "不是随便取的坐标。完整 6 条引物见 §2.3。\n\n")
+        L.append("| 名称 | 序列 (5'→3') | 长度 | Tm≈ | 产物 | 用途 |\n")
+        L.append("|---|---|---|---|---|---|\n")
+        for vp in plan.vector_primers:
+            tm = "—" if vp.get("tm") is None else str(vp["tm"])
+            ps = f"{vp['product_size']:,} bp" if vp.get("product_size") else "—"
+            use = vp.get("description") or vp.get("role") or "—"
+            L.append(f"| {vp['name']} | `{vp['seq']}` | {vp['length']} | "
+                     f"{tm} | {ps} | {use} |\n")
+        src = os.path.basename(getattr(spec, "path", "") or "") or "构建规范"
+        L.append(f"\n> 序列、Tm 与产物长度引自构建规范 `{src}`（SOP 表），"
+                 "**不是本工具估算**。\n")
+        for vp in plan.vector_primers:
+            if vp.get("has_lowercase"):
+                L.append(f"> 📝 **{vp['name']}** 序列含小写段 —— SOP 用大小写区分"
+                         "「同源臂 / 退火段」，但**本载体的 GA778 整条都与模板一致**"
+                         "（8,888–8,909），并不存在人工尾巴，下单按大写即可。\n")
+            if vp.get("note"):
+                L.append(f"> 📝 **{vp['name']}**：{vp['note']}\n")
+
+    # ---- 2.3 三片段引物组（6 条）+ 同源区检查 ----
+    sch = getattr(plan, "scheme", None)
+    if sch:
+        L.append("\n### 2.3 三片段 Gibson 引物组（**共 6 条**）与同源区检查\n")
+        L.append("⚠️ **GA725 与 GA778 不是一对引物。** SOP 是三片段、两两配对：\n"
+                 "Fragment 1 = **GA725 + Cargo1**；Fragment 2 = cargo 本身；"
+                 "Fragment 3 = **GA778 + Frag3_R**。\n"
+                 "线性重组顺序 **F1 → cargo → F3 → 回到 F1**，因此一共有 **3 处**同源区"
+                 "（不是 2 处）：J1 / J2 由 cargo 引物的同源臂提供，**J3 是环化用的，最容易漏。**\n\n")
+        L.append(f"产物总长（组装后）：{sch['total_len']:,} bp"
+                 f"　｜　插入位点：{sch['edit_start']:,}–{sch['edit_end']:,}"
+                 f"（替换 {sch['edit_end'] - sch['edit_start']} bp）\n\n")
+        L.append("| 片段 | 引物 | 方向 | 序列 (5'→3') | 长度 | Tm≈ | 片段长 | 来源 |\n")
+        L.append("|---|---|---|---|---|---|---|---|\n")
+        for fr in sch["fragments"]:
+            for pr in fr["primers"]:
+                src_tag = "SOP 原引物" if pr.get("from_sop") else "由序列推导"
+                L.append(f"| {fr['name']} | **{pr['name']}** | {pr['dir']} | "
+                         f"`{pr['seq']}` | {len(pr['seq'])} | {pr['tm']:.1f} | "
+                         f"{fr['length']:,} bp | {src_tag} |\n")
+
+        # ---- 引物特异性：每条在自己的模板上有几个结合位点 ----
+        spec_rows = sch.get("specificity") or []
+        if spec_rows:
+            L.append(f"\n**引物特异性检查**（3' 末端 {spec_rows[0]['anchor_len']} nt "
+                     "在模板双链上的结合位点数 —— 必须为 1）\n\n")
+            L.append("| 引物 | 模板 | 长度 | 3' 端位点数 | 全长位点数 | 位置 | 判定 |\n")
+            L.append("|---|---|---|---|---|---|---|\n")
+            for row in spec_rows:
+                pos = row["anchor_pos"][0] if row["anchor_pos"] else "—"
+                mark = "✅" if row["verdict"] == "OK" else f"❌ {row['verdict']}"
+                L.append(f"| {row['name']} | {row['template']} | {row['length']} | "
+                         f"{row['anchor_sites']} | {row['full_sites']} | {pos} | {mark} |\n")
+            bad = [r for r in spec_rows if r["verdict"] != "OK"]
+            if bad:
+                L.append("\n> 🔴 **有引物不唯一，不要下单。** PCR 会从多个位置起始扩增，"
+                         "产物是混合物；最坏情况下会得到缺失关键元件的片段，"
+                         "而 Gibson 与菌落 PCR 都还能正常，直到接合才发现零转化子。\n")
+            else:
+                L.append("\n> ✅ 全部 6 条引物的 3' 端在各自模板上唯一。\n")
+
+        L.append("\n**同源区检查**（逐 junction 比对，必须完全一致才能组装）\n\n")
+        L.append("| Junction | 左端序列 | 右端序列 | 长度 | GC | 臂在骨架上 | 结果 |\n")
+        L.append("|---|---|---|---|---|---|---|\n")
+        for c in sch["checks"]:
+            mark = "✅ 一致" if c["ok"] else "❌ **不一致**"
+            arm = "唯一" if c.get("arm_sites", 1) == 1 else f"⚠ {c['arm_sites']} 处"
+            L.append(f"| {c['junction']} | `{c['a']}` | `{c['b']}` | {c['len']} | "
+                     f"{c['gc']:.0%} | {arm} | {mark} |\n")
+        ok_all = all(c["ok"] for c in sch["checks"])
+        L.append(f"\n> 结论：**{'全部 3 处同源区一致，可按上表下单' if ok_all else '存在不一致，先解决再下单'}**\n")
+        if sch.get("overlap_shift"):
+            L.append(f"\n> 🔧 **自动调整**：{sch['overlap_shift']}\n")
+        f1_len = sch["fragments"][0]["length"]
+        f3_len = sch["fragments"][2]["length"]
+        L.append(f"\n> 📏 **片段长度对照**：SOP 记 Fragment 1 ≈ 6,986 bp、"
+                 f"Fragment 3 ≈ 3,076 bp；本方案 F1 = {f1_len:,} bp、F3 = {f3_len:,} bp。"
+                 "F1 差 24 bp 是 Cargo1 的引物长度（其 5' 端到 8,890），"
+                 "**属预期差异**。\n")
 
     L.append("\n## 3. 片段与加量（来自 SOP）\n")
     L.append("| 片段 | 内容 | 长度 | 建议加量 |\n|---|---|---|---|\n")
