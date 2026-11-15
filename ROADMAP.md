@@ -20,7 +20,7 @@
 
 ---
 
-## 1. 现状快照（2026-11-15，v0.0.6）
+## 1. 现状快照（2026-11-16，v0.0.7）
 
 ### 已经过验证的
 
@@ -30,7 +30,7 @@
 | 脱靶引擎 vs 暴力穷举 | 4 组种子 × 80 条 spacer，完全一致，漏检 0 |
 | 论文锚点 | 10/10（Table S2 已发表 sgRNA 能被重新发现） |
 | 引物特异性 | 13/13（`scripts/verify_primer_specificity.py`） |
-| 任意插入位点 | 23/23（`scripts/verify_insertion_anchors.py`，含默认路线的 CmR 一致性） |
+| 任意插入位点 / 两片段方案 | 39/39（`scripts/verify_insertion_anchors.py`） |
 | 插件（DSH 0.2.2-rc.3） | tsc=0，四个冒烟全过，`plugin list` 无兼容性警告 |
 | 单元自检 | 7/7（`python -m stib.seqfeatures`） |
 
@@ -43,7 +43,7 @@
 
 ### 发布状态
 
-- 本地 `main` 已到 `v0.0.6`，**领先远程 3 个提交未推送**（`v0.0.4`、`v0.0.5`、`v0.0.6`）。
+- 本地 `main` 已到 `v0.0.7`，**领先远程 5 个提交未推送**。
 - GitHub：<https://github.com/Yucan-Hu/stib_planner>（远程停在 `65a6a94`）。
 
 ---
@@ -51,10 +51,11 @@
 ## 2. P0 — 已知缺陷（先修这些）
 
 > **原 P0-1（默认位点与筛选警告自相矛盾）已于 `v0.0.6` 修复**，
-> 见 §9 与 `scripts/verify_insertion_anchors.py` 的 `[H]` 组断言。
-> 当前仅剩下面一条。
+> **原 P0-2（`after_le` 无法自动出引物）已于 `v0.0.7` 修复**（改走两片段方案）。
+> 两者见 §9 与 `scripts/verify_insertion_anchors.py` 的 `[H]` / `[J]` 组断言。
+> **当前没有未修的 P0。**
 
-### P0-2　`after_le` 路线无法自动出三片段引物
+### P0-2　`after_le` 路线无法自动出三片段引物　✅ **v0.0.7 已修复**
 
 **现象**：
 
@@ -278,8 +279,7 @@ F1 = 载体线性化引物（一对），F2 = cargo（带两侧同源臂）。
 ## 8. 建议的推进顺序
 
 ```
-P0-2（after_le 出路）
-  → P1-2（干净环境装一次）
+P1-2（干净环境装一次）
   → P1-1（Mac 实机）
   → P2-1 / P2-2（小的体验问题）
   → P2-5（两片段方案）
@@ -302,4 +302,5 @@ P1-1 决定 Mac 用户敢不敢用；湿实验放在最后不是因为不重要�
 | v0.0.3 | 修 `DSH_HOME` 不可见导致的 Python 探测失败；修相对路径；FASTA 的 BOM | `node dsh-plugin/smoke-live.mjs` |
 | v0.0.4 | 插入位点边界改用 Cargo1/GA778 端点；引物特异性硬约束（3' 端 15 nt 唯一） | `python scripts/verify_primer_specificity.py` |
 | v0.0.5 | 任意插入位点（两侧锚序列 / 坐标）+ LE–RE 校验 | `python scripts/verify_insertion_anchors.py` |
+| v0.0.7 | **原 P0-2**：`after_le` 整段替换改用**两片段**方案（载体线性化 + cargo，4 条引物）；AT 富集接点自动放宽并在报告里给出「留骨架间隔」的替代参数 | `python scripts/verify_insertion_anchors.py`（`[J]` 组） |
 | v0.0.6 | **原 P0-1**：默认位点改为 `after_selection`（保留 CmR），并删掉 `else` 分支里硬编码的「保留氯霉素筛选」文案 —— CmR 结论只由一处判定回答，不再自相矛盾 | `python scripts/verify_insertion_anchors.py`（`[H]` 组） |

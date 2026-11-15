@@ -42,7 +42,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from .cargo import (AssemblyPlan, build_3fragment_scheme, check_cargo,
+from .cargo import (AssemblyPlan, build_2fragment_scheme,
+                    build_3fragment_scheme, check_cargo,
                     design_assembly_primers)
 from .sequence import revcomp
 from .construct import (ConstructSpec, features_from_snapgene,
@@ -68,9 +69,20 @@ STRATEGY_REPLACE_SELECTION = "replace_selection"
 #                   与 GA778 的语义相同（正向引物，5' 端落在右边界）
 
 
+def _normalise_anchor(seq: str) -> str:
+    """
+    归一化锚序列：去掉**所有**空白（空格 / 制表 / 换行）并转大写。
+
+    ⚠️ 必须在这里做一次、并把归一化后的长度用于坐标计算。
+    早期版本搜索时去空白、算长度时却用原始字符串 —— 于是用户从文件里
+    粘一段带空格或换行的序列时，边界会**静默偏移**（实测 +1 bp / 每个空格）。
+    """
+    return "".join(str(seq).split()).upper()
+
+
 def _match_sites(seq: str, probe: str) -> list[tuple[int, str]]:
-    """probe 及其反向互补在 + 链上的全部匹配：[(起始坐标, '+'|'-')]。"""
-    probe = probe.upper()
+    """probe 及其反向互补在 + 链上的全部匹配：[(足迹起始坐标, '+'|'-')]。"""
+    probe = _normalise_anchor(probe)
     out: list[tuple[int, str]] = []
     i = seq.find(probe)
     while i >= 0:
@@ -85,9 +97,9 @@ def _match_sites(seq: str, probe: str) -> list[tuple[int, str]]:
     return sorted(out)
 
 
-def _locate_unique(seq: str, probe: str, label: str) -> tuple[int, str]:
-    """把锚序列定位到**唯一**位点；0 处或多处都报错并列出。"""
-    probe = probe.upper().replace(" ", "").strip()
+def _locate_unique(seq: str, probe: str, label: str) -> tuple[int, str, int]:
+    """把锚序列定位到**唯一**位点；返回 (足迹起始坐标, 链, 归一化长度)。"""
+    probe = _normalise_anchor(probe)
     if len(probe) < 12:
         raise ValueError(
             f"{label} 只有 {len(probe)} nt，太短 —— 至少给 12 nt，"
@@ -96,37 +108,69 @@ def _locate_unique(seq: str, probe: str, label: str) -> tuple[int, str]:
     if not sites:
         raise ValueError(
             f"{label} 在载体上找不到：{probe}\n"
-            f"  确认它来自**这个**载体文件（大小写、正反方向都可能影响）。")
+            f"  已忽略空格/换行。确认它来自**这个**载体文件，"
+            f"并检查是否给成了反向互补。")
     if len(sites) > 1:
         where = "、".join(f"{p:,}({s}链)" for p, s in sites)
         raise ValueError(
             f"{label} 在载体上有 {len(sites)} 处匹配，无法唯一确定插入点：{where}\n"
             f"  请给更长的序列（多 5–10 nt 通常就能区分），"
             f"或改用坐标 `--replace-region START END`。")
-    return sites[0]
+    pos, strand = sites[0]
+    return pos, strand, len(probe)
 
 
 def resolve_insertion_anchors(backbone_seq: str,
                               anchor_left: str,
-                              anchor_right: str) -> tuple[int, int]:
+                              anchor_right: str,
+                              *,
+                              details: dict | None = None) -> tuple[int, int]:
     """
     用两侧锚序列求出插入区间 ``[start, end)``。
 
-    左锚的 3' 端 = 左边界；右锚的 5' 端 = 右边界。
-    两条锚的方向由它们在载体上的匹配链自动判定，用户按任一方向给都行。
+    语义（与 SOP 的两条引物一致）：
+      - **左锚的 3' 端** = 左边界。若它匹配 + 链（正向），3' 端在足迹**末端**；
+        若匹配 − 链（反向引物，如 Cargo1），3' 端在足迹**起点**。
+      - **右锚的 5' 端** = 右边界。若它匹配 + 链（正向引物，如 GA778），
+        5' 端在足迹**起点**；若匹配 − 链，5' 端在足迹**末端**。
+
+    ⚠️ 方向是**推断**的，因此同一段序列按反向互补给会得到不同边界（差一个锚长）。
+    这不一定是错 —— 反向引物本来就该这样给。但为避免误用，
+    传入 ``details`` 会回填每条锚的匹配链与推出的边界，供报告层打印出来核对。
+
+    参数:
+      details  可选 dict，成功时回填 {'left': {...}, 'right': {...}}
     """
-    lp, lstrand = _locate_unique(backbone_seq, anchor_left, "左锚序列")
-    rp, rstrand = _locate_unique(backbone_seq, anchor_right, "右锚序列")
+    lp, lstrand, llen = _locate_unique(backbone_seq, anchor_left, "左锚序列")
+    rp, rstrand, rlen = _locate_unique(backbone_seq, anchor_right, "右锚序列")
 
     # 左锚：3' 端贴着插入点
-    left = lp + len(anchor_left.strip()) if lstrand == "+" else lp
+    left = lp + llen if lstrand == "+" else lp
     # 右锚：5' 端贴着插入点
-    right = rp if rstrand == "+" else rp + len(anchor_right.strip())
+    right = rp if rstrand == "+" else rp + rlen
+
+    if details is not None:
+        details["left"] = {
+            "input_len": len(_normalise_anchor(anchor_left)),
+            "footprint": (lp, lp + llen),
+            "strand": lstrand,
+            "boundary": left,
+            "end_used": "3' 端",
+        }
+        details["right"] = {
+            "input_len": len(_normalise_anchor(anchor_right)),
+            "footprint": (rp, rp + rlen),
+            "strand": rstrand,
+            "boundary": right,
+            "end_used": "5' 端",
+        }
 
     if left > right:
         raise ValueError(
             f"两条锚序列的顺序反了：左锚推出边界 {left:,}，右锚推出 {right:,}。\n"
-            f"  左锚应是插入点**上游**（5' 侧）的序列，右锚是**下游**（3' 侧）的序列。")
+            f"  左锚应是插入点**上游**（5' 侧）的序列，右锚是**下游**（3' 侧）的序列。\n"
+            f"  提示：左锚匹配 {lstrand} 链、右锚匹配 {rstrand} 链；"
+            f"若方向给反了，边界会差一个锚长（{llen if lstrand == '-' else rlen} bp）。")
     return left, right
 
 
@@ -257,18 +301,25 @@ def build_construct_map(spec: ConstructSpec, backbone_seq: str,
 
     # ---- 决定编辑区间 ----
     if anchor_left and anchor_right:
+        anchor_info: dict = {}
         edit_start, edit_end = resolve_insertion_anchors(
-            backbone_seq, anchor_left, anchor_right)
+            backbone_seq, anchor_left, anchor_right, details=anchor_info)
         strategy = "anchors"
         errors, warns = validate_insertion_region(
             spec, backbone_features, edit_start, edit_end)
         if errors:
             raise ValueError("\n".join(errors))
         warnings.extend(warns)
+        li, ri = anchor_info.get("left", {}), anchor_info.get("right", {})
         warnings.append(
             f"📍 **插入位点**：由两侧锚序列定位 —— 区间 "
             f"{edit_start:,}–{edit_end:,}（替换 {edit_end - edit_start} bp）\n"
-            f"    左锚 3' 端 = {edit_start:,}；右锚 5' 端 = {edit_end:,}")
+            f"    左锚 {li.get('input_len', '?')} nt，匹配 {li.get('strand', '?')} 链，"
+            f"取 3' 端 → 左边界 {li.get('boundary', '?'):,}\n"
+            f"    右锚 {ri.get('input_len', '?')} nt，匹配 {ri.get('strand', '?')} 链，"
+            f"取 5' 端 → 右边界 {ri.get('boundary', '?'):,}\n"
+            f"    ⚠️ 方向是推断的：同一段序列按**反向互补**给会得到差一个锚长的边界。"
+            f"上面的链与边界请核对一遍。")
     elif anchor_left or anchor_right:
         missing = "anchor_right（右锚）" if anchor_left else "anchor_left（左锚）"
         raise ValueError(
@@ -396,27 +447,64 @@ def build_construct_map(spec: ConstructSpec, backbone_seq: str,
         vector_primers=getattr(spec, "primers", None))
     warnings.extend(plan.warnings)
 
-    # ---- 三片段 Gibson：完整 6 条引物 + 三处同源区检查 ----
-    # ⚠️ 配对：GA725 + Cargo1（Fragment 1）、GA778 + Frag3_R（Fragment 3）。
-    #    插入位点两端就是 Cargo1 的 3' 端与 GA778 的 5' 端 —— 不能随手取，
-    #    取错会让 F3 被迫另设正向引物，而该区常常不唯一（见 construct_psh43.yml）。
-    try:
-        ga = (getattr(spec, "primers", None) or {}).get("GA725") or {}
-        plan.scheme = build_3fragment_scheme(
+    # ---- 组装方案：整段替换走两片段，保留筛选盒走三片段 ----
+    #
+    # 为什么分两套：
+    #   三片段（SOP 原方案）把接点放在 GA725/Cargo1/GA778 这些**好用的位置**，
+    #   适用于「只换一小段」（默认 8,866–8,888）。
+    #   整段替换（after_le / replace_selection）要把 LE–RE 之间全换掉，
+    #   接点被钉死在 LE 的 3' 端与 RE 的 5' 端 —— 那里 AT 富集、且三片段
+    #   还需要第三处同源区，反而更别扭。所以这条路改用**两片段**：
+    #   载体线性化 + cargo。
+    ga = (getattr(spec, "primers", None) or {}).get("GA725") or {}
+    want_two = (
+        strategy == STRATEGY_REPLACE_SELECTION
+        or bool(site is not None and getattr(site, "replace_all", False))
+    )
+
+    def _try_2fragment() -> dict:
+        return build_2fragment_scheme(
+            backbone_seq, edit_start, edit_end, inserted,
+            overlap_len=overlap_len, cargo_name=cargo_name,
+            known=getattr(spec, "primers", None))
+
+    def _try_3fragment() -> dict:
+        return build_3fragment_scheme(
             backbone_seq, edit_start, edit_end, inserted,
             ga725_start=int(ga.get("anneal_pos") or 1904),
             overlap_len=overlap_len, cargo_name=cargo_name,
             ga725_seq=str(ga.get("seq") or "").strip() or None,
             known=getattr(spec, "primers", None))
-        warnings.extend(plan.scheme["warnings"])
-    except Exception as exc:  # 设计失败不应让整份方案崩溃
+
+    plan.scheme = None
+    errors: list[str] = []
+    order = [_try_2fragment, _try_3fragment] if want_two else [_try_3fragment, _try_2fragment]
+    for idx, maker in enumerate(order):
+        try:
+            plan.scheme = maker()
+            break
+        except Exception as exc:            # 一种方案失败就换另一种，不让整份方案崩溃
+            errors.append(f"{'两片段' if maker is _try_2fragment else '三片段'}：{exc}")
+
+    if plan.scheme is None:
         warnings.append(
-            f"⚠️ 三片段引物设计失败：{exc}\n"
-            f"  这只影响**载体片段的扩增引物**，cargo 本身的引物仍然有效。\n"
-            f"  常见原因：该边界落在重复区（本载体的 LE/RE、rrnB 终止子、"
-            f"CmR 附近都有重复），使 3' 端在模板上不唯一。\n"
-            f"  建议：① 改用 `after_selection` 位点（边界由 Cargo1 / GA778 决定，"
-            f"已实测唯一）；② 或人工设计该端的引物后自行核对特异性。")
+            "⚠️ **两种组装方案都未能生成载体引物**：" + " ｜ ".join(errors) + "\n"
+            "  只影响**载体片段的扩增引物**，cargo 本身的引物仍然有效。\n"
+            "  常见原因：接点落在重复区或 AT 富集的转座子末端。\n"
+            "  建议：① 改用 `after_selection` 位点（边界由 Cargo1 / GA778 决定，"
+            "已实测唯一）；② 或人工设计该端引物后自行核对特异性。")
+    else:
+        kind = plan.scheme.get("kind", "3fragment")
+        n_primer = sum(len(fr["primers"]) for fr in plan.scheme["fragments"])
+        if kind == "2fragment":
+            warnings.append(
+                f"ℹ️ 本次是**整段替换**，采用**两片段**方案（载体线性化 + cargo，"
+                f"共 {n_primer} 条引物）。"
+                + (f"三片段不可用：{errors[0]}" if order[0] is _try_3fragment and errors else ""))
+        elif want_two:
+            warnings.append(
+                f"ℹ️ 本想用两片段方案但不可行，已退回三片段（{n_primer} 条引物）。")
+        warnings.extend(plan.scheme["warnings"])
 
     # ---- 拼接新序列 ----
     new_seq = backbone_seq[:edit_start] + inserted + backbone_seq[edit_end:]
@@ -507,15 +595,22 @@ def cargo_report(spec: ConstructSpec, cm, plan: AssemblyPlan,
         unused = [vp["name"] for vp in plan.vector_primers if vp["name"] not in used]
         L.append(f"\n### 2.2 SOP 记录的载体引物（规范里共 {n_vp} 条）\n")
         if sch:
-            L.append(f"> 本方案**实际用到**：{'、'.join(sorted(used)) if used else '（无，全部由序列推导）'}。\n")
-            if unused:
-                L.append(f"> 未用到（只在该引物自身的端点成立时才适用）："
-                         f"{'、'.join(unused)}。\n")
-        L.append("\n⚠️ **它们不是一对。** SOP 是三片段组装：\n"
-                 "- **GA725 + Cargo1** 扩增 Fragment 1（Cargo1 反向，3' 端落在插入位点左边界）\n"
-                 "- **GA778 + Frag3_R** 扩增 Fragment 3（GA778 正向，5' 端落在右边界）\n\n"
-                 "**插入位点的左右边界就是由这两条决定的**（默认位点下为 8,866 与 8,888）。"
-                 "完整 6 条引物见 §2.3。\n\n")
+            if used:
+                L.append(f"> 本方案**实际用到**：{'、'.join(sorted(used))}。\n")
+                if unused:
+                    L.append(f"> 未用到（只在该引物自身的端点成立时才适用）："
+                             f"{'、'.join(unused)}。\n")
+            else:
+                L.append("> ⚠️ **本方案一条都不用** —— 这是两片段方案（载体线性化 + cargo），"
+                         "载体引物由序列推导（见 §2.3）。下表仅作资料留存，**不要下单**。\n")
+        if sch and used:
+            L.append("\n⚠️ **它们不是一对。** SOP 是三片段组装：\n"
+                     "- **GA725 + Cargo1** 扩增 Fragment 1（Cargo1 反向，3' 端落在插入位点左边界）\n"
+                     "- **GA778 + Frag3_R** 扩增 Fragment 3（GA778 正向，5' 端落在右边界）\n\n"
+                     "**插入位点的左右边界就是由这两条决定的**（默认位点下为 8,866 与 8,888）。"
+                     "完整引物组见 §2.3。\n\n")
+        elif sch:
+            L.append("\n（三片段方案的配对关系不适用于本方案，故不列出。）\n\n")
         L.append("| 名称 | 序列 (5'→3') | 长度 | Tm≈ | 产物 | 用途 |\n")
         L.append("|---|---|---|---|---|---|\n")
         for vp in plan.vector_primers:
@@ -535,14 +630,22 @@ def cargo_report(spec: ConstructSpec, cm, plan: AssemblyPlan,
             if vp.get("note"):
                 L.append(f"> 📝 **{vp['name']}**：{vp['note']}\n")
 
-    # ---- 2.3 三片段引物组（6 条）+ 同源区检查 ----
+    # ---- 2.3 引物组（两片段 4 条 / 三片段 6 条）+ 同源区检查 ----
     if sch:
-        L.append("\n### 2.3 三片段 Gibson 引物组（**共 6 条**）与同源区检查\n")
-        L.append("⚠️ **GA725 与 GA778 不是一对引物。** SOP 是三片段、两两配对：\n"
-                 "Fragment 1 = **GA725 + Cargo1**；Fragment 2 = cargo 本身；"
-                 "Fragment 3 = **GA778 + Frag3_R**。\n"
-                 "线性重组顺序 **F1 → cargo → F3 → 回到 F1**，因此一共有 **3 处**同源区"
-                 "（不是 2 处）：J1 / J2 由 cargo 引物的同源臂提供，**J3 是环化用的，最容易漏。**\n\n")
+        kind = sch.get("kind", "3fragment")
+        n_primers = sum(len(fr["primers"]) for fr in sch["fragments"])
+        if kind == "2fragment":
+            L.append(f"\n### 2.3 两片段 Gibson 引物组（**共 {n_primers} 条**）与同源区检查\n")
+            L.append("整段替换用**两片段**：载体线性化 + cargo，只有 **2 处**同源区。\n"
+                     "**不需要** GA725 / Cargo1 / GA778 —— 载体引物由序列推导。\n\n")
+        else:
+            L.append(f"\n### 2.3 三片段 Gibson 引物组（**共 {n_primers} 条**）与同源区检查\n")
+            L.append("⚠️ **GA725 与 GA778 不是一对引物。** SOP 是三片段、两两配对：\n"
+                     "Fragment 1 = **GA725 + Cargo1**；Fragment 2 = cargo 本身；"
+                     "Fragment 3 = **GA778 + Frag3_R**。\n"
+                     "线性重组顺序 **F1 → cargo → F3 → 回到 F1**，因此一共有 **3 处**同源区"
+                     "（不是 2 处）：J1 / J2 由 cargo 引物的同源臂提供，"
+                     "**J3 是环化用的，最容易漏。**\n\n")
         L.append(f"产物总长（组装后）：{sch['total_len']:,} bp"
                  f"　｜　插入位点：{sch['edit_start']:,}–{sch['edit_end']:,}"
                  f"（替换 {sch['edit_end'] - sch['edit_start']} bp）\n\n")
@@ -573,7 +676,7 @@ def cargo_report(spec: ConstructSpec, cm, plan: AssemblyPlan,
                          "产物是混合物；最坏情况下会得到缺失关键元件的片段，"
                          "而 Gibson 与菌落 PCR 都还能正常，直到接合才发现零转化子。\n")
             else:
-                L.append("\n> ✅ 全部 6 条引物的 3' 端在各自模板上唯一。\n")
+                L.append(f"\n> ✅ 全部 {len(spec_rows)} 条引物的 3' 端在各自模板上唯一。\n")
 
         L.append("\n**同源区检查**（逐 junction 比对，必须完全一致才能组装）\n\n")
         L.append("| Junction | 左端序列 | 右端序列 | 长度 | GC | 臂在骨架上 | 结果 |\n")
@@ -584,14 +687,16 @@ def cargo_report(spec: ConstructSpec, cm, plan: AssemblyPlan,
             L.append(f"| {c['junction']} | `{c['a']}` | `{c['b']}` | {c['len']} | "
                      f"{c['gc']:.0%} | {arm} | {mark} |\n")
         ok_all = all(c["ok"] for c in sch["checks"])
-        L.append(f"\n> 结论：**{'全部 3 处同源区一致，可按上表下单' if ok_all else '存在不一致，先解决再下单'}**\n")
+        n_j = len(sch["checks"])
+        L.append(f"\n> 结论：**{'全部 %d 处同源区一致，可按上表下单' % n_j if ok_all else '存在不一致，先解决再下单'}**\n")
         if sch.get("overlap_shift"):
             L.append(f"\n> 🔧 **自动调整**：{sch['overlap_shift']}\n")
-        f1_len = sch["fragments"][0]["length"]
-        f3_len = sch["fragments"][2]["length"]
-        L.append(f"\n> 📏 **片段长度对照**：SOP 记 Fragment 1 ≈ 6,986 bp、"
-                 f"Fragment 3 ≈ 3,076 bp；本方案 F1 = {f1_len:,} bp、F3 = {f3_len:,} bp。"
-                 "F1 差 24 bp 是 Cargo1 的引物长度（其 5' 端到 8,890），"
+        if kind == "3fragment" and len(sch["fragments"]) >= 3:
+            f1_len = sch["fragments"][0]["length"]
+            f3_len = sch["fragments"][2]["length"]
+            L.append(f"\n> 📏 **片段长度对照**：SOP 记 Fragment 1 ≈ 6,986 bp、"
+                     f"Fragment 3 ≈ 3,076 bp；本方案 F1 = {f1_len:,} bp、F3 = {f3_len:,} bp。"
+                     "F1 差 24 bp 是 Cargo1 的引物长度（其 5' 端到 8,890），"
                  "**属预期差异**。\n")
 
     L.append("\n## 3. 片段与加量（来自 SOP）\n")

@@ -710,30 +710,50 @@ def cmd_cargo(args: argparse.Namespace) -> int:
         print(f"    退火段(3')  : {pr.anneal}")
         print(f"    Tm 估算     : {pr.tm_full:.1f} °C（全长，估算值）")
 
-    # ⚠️ 三片段组装里，扩增载体的那两条同样要下单；漏了会在 Gibson 前一无所知
+    # ---- 组装方案（两片段 / 三片段）----
+    sch = getattr(plan, "scheme", None)
+    kind = (sch or {}).get("kind", "3fragment")
+    n_primers = sum(len(fr["primers"]) for fr in sch["fragments"]) if sch else 0
+    used_sop = set()
+    if sch:
+        for fr in sch["fragments"]:
+            for pr in fr["primers"]:
+                if pr.get("from_sop"):
+                    used_sop.add(pr["name"])
+
+    # ⚠️ 只有**本方案实际用到**的 SOP 引物才需要下单；两片段方案一条都不用
     if plan.vector_primers:
+        unused = [vp["name"] for vp in plan.vector_primers if vp["name"] not in used_sop]
         print()
-        print(f"=== 载体扩增引物（也必须下单 —— {len(plan.vector_primers)} 条）===")
+        if used_sop:
+            print(f"=== SOP 载体引物（本方案用到 {len(used_sop)} 条，同样要下单）===")
+        else:
+            print("=== 规范里记录的 SOP 载体引物（**本方案一条都不用**）===")
         for vp in plan.vector_primers:
+            mark = "✔ 用到" if vp["name"] in used_sop else "— 本方案不用"
             extra = []
             if vp.get("tm") is not None:
                 extra.append(f"Tm {vp['tm']}（SOP 表值）")
             if vp.get("product_size"):
                 extra.append(f"产物 {int(vp['product_size']):,} bp")
             suffix = f"  [{'; '.join(extra)}]" if extra else ""
-            print(f"  {vp['name']:<8} {vp['seq']}  ({vp['length']} nt)"
+            print(f"  {vp['name']:<8} {vp['seq']}  ({vp['length']} nt)  {mark}"
                   f"  {vp.get('description') or ''}{suffix}")
-            if vp.get("has_lowercase"):
-                print("           小写段是 SOP 的「同源臂/退火段」书写习惯；"
-                      "本载体的 GA778 整条与模板一致，按大写下单即可")
-        print("  ⚠️ 只订 cargo 引物做不出三片段组装")
+        if unused and used_sop:
+            print(f"  未用到：{'、'.join(unused)}（只在该引物自身的端点成立时才适用）")
+        if used_sop:
+            print("  ⚠️ 只订 cargo 引物做不出组装")
 
-    # ---- 三片段完整引物组 + 同源检查 ----
-    sch = getattr(plan, "scheme", None)
     if sch:
+        label = ("两片段（载体线性化 + cargo）" if kind == "2fragment"
+                 else "三片段（F1 + cargo + F3）")
         print()
-        print("=== 三片段 Gibson 引物组（共 6 条）===")
-        print("  ⚠️ GA725 / GA778 不是一对：F1=GA725+Cargo1, F2=cargo, F3=GA778+Frag3_R")
+        print(f"=== Gibson 引物组 —— {label}，共 {n_primers} 条 ===")
+        if kind != "2fragment":
+            print("  ⚠️ GA725 / GA778 不是一对：F1=GA725+Cargo1, F2=cargo, F3=GA778+Frag3_R")
+        else:
+            print("  ⚠️ 两片段：载体用 vec_F/vec_R 一对扩增，cargo 用另一对；"
+                  "**不需要** GA725 / Cargo1 / GA778")
         print(f"  插入位点 {sch['edit_start']:,}–{sch['edit_end']:,}"
               f"（替换 {sch['edit_end'] - sch['edit_start']} bp），"
               f"组装后 {sch['total_len']:,} bp")

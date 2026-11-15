@@ -414,7 +414,7 @@ def design_assembly_primers(cargo: str, *,
     plan.warnings.append(
         "⚠️ cargo 引物的同源臂取自**插入位点两翼**（由本工具计算），"
         "Cargo1 / GA778 只负责扩增载体片段，不参与 cargo 替换。"
-        "务必核对三处同源区（见 §2.3 的 J1/J2/J3）。")
+        "务必核对报告 §2.3 的同源区比对（三片段 3 处、两片段 2 处）。")
 
     return plan
 
@@ -563,6 +563,203 @@ def _fwd_at(seq: str, x: int, **kw) -> dict | None:
 def _rev_ending(seq: str, y: int, **kw) -> dict | None:
     """反向引物：5' 端固定在 y（扩增子右边界），3' 端落在 y−L。"""
     return _design_at(seq, pos=y, direction="R", **kw)
+
+
+def _design_with_relax(template: str, *, pos: int, direction: str) -> tuple[dict | None, str | None]:
+    """
+    先按常规窗口设计；不行再逐级放宽，并**说明放宽了什么**。
+
+    ⚠️ 为什么需要放宽：`after_le` 这类「整段替换」的端点落在转座子末端，
+    而 LE/RE 本身 AT 富集（本载体 LE 末端 30 nt 的 GC 只有 20%）。
+    端点又被构建方式钉死，不能随便挪 —— 于是只能在"放宽引物参数"与
+    "留出骨架间隔"之间选一个。这里选择**放宽 + 明确报告**，
+    并在报告里给出「下移几 bp 就能用常规引物」的替代方案。
+    """
+    got = _design_at(template, pos=pos, direction=direction)
+    if got is not None:
+        return got, None
+    got = _design_at(template, pos=pos, direction=direction,
+                     gc_range=(0.22, 0.68), tm_range=(54.0, 70.0),
+                     min_len=18, max_len=45)
+    if got is not None:
+        return got, ("此处 GC 40–60% / Tm 56–66 °C 无解（多半是 AT 富集的转座子末端），"
+                     "已放宽到 GC 22–68% / Tm 54–70 °C，并允许加长到 45 nt")
+    return None, None
+
+
+def _junction_alternatives(template: str, *, junction: int, direction: str,
+                           span: int = 20, limit: int = 3) -> list[dict]:
+    """
+    在端点附近找满足**常规**窗口的替代端点。
+
+    代价是留出「骨架间隔」：反向引物下移 → LE 与 cargo 之间多出 N bp；
+    正向引物上移 → cargo 与 RE 之间多出 N bp。
+    """
+    out: list[dict] = []
+    if direction == "R":          # 3' 端；下移 = 把端点往右挪
+        rng = range(junction + 1, junction + span + 1)
+    else:                          # 5' 端；上移 = 把端点往左挪
+        rng = range(junction - 1, junction - span - 1, -1)
+    for y in rng:
+        if y <= 0:
+            continue
+        got = _design_at(template, pos=y, direction=direction)
+        if got is None:
+            continue
+        out.append({"pos": y, "gap": abs(y - junction),
+                    "seq": got["seq"], "length": got["length"],
+                    "tm": got["tm"], "gc": got["gc"]})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def build_2fragment_scheme(backbone: str, edit_start: int, edit_end: int,
+                           cargo: str, *,
+                           overlap_len: int = DEFAULT_OVERLAP_LEN,
+                           cargo_name: str = "cargo",
+                           known: dict | None = None) -> dict:
+    """
+    全段替换（`after_le` / `--replace-selection`）用的**两片段** Gibson。
+
+    为什么要单独一个方案：这条路要把 LE 与 RE 之间整段换掉，两端的接点被
+    构建方式**钉死**在 LE 的 3' 端与 RE 的 5' 端，不能像三片段那样把边界
+    挪到好用的位置。于是：
+
+        片段 1（载体）：backbone[edit_end:] + backbone[:edit_start]   （跨环线性）
+        片段 2（cargo）：cargo 本身，两侧带同源臂
+
+    引物：
+      vec_F —— 5' 端在 edit_end（**自由端**，长度可挑）
+      vec_R —— 3' 端在 edit_start（**固定端**，必须紧贴左边界）
+
+    ⚠️ 这两条引物会落在转座子末端附近，而 LE/RE 是 AT 富集的。
+    常规 GC/Tm 窗口可能无解 —— 此时会放宽并在 `warnings` 里写明，
+    同时给出「端点挪 N bp 就能用常规引物」的替代参数（代价是留骨架间隔）。
+
+    返回结构与 `build_3fragment_scheme` 对齐（fragments / checks /
+    specificity / warnings / edit_start / edit_end / total_len），
+    额外带 `kind: "2fragment"`。
+    """
+    n = len(backbone)
+    warnings: list[str] = []
+
+    vec_len = (n - edit_end) + edit_start
+    if vec_len <= 0:
+        raise ValueError(
+            f"两片段方案不可行：替换区间 {edit_start:,}–{edit_end:,} "
+            f"覆盖了整个载体，没有载体片段可扩。")
+
+    # ---------- 载体片段的两条引物 ----------
+    vec_f, relax_f = _design_with_relax(backbone, pos=edit_end, direction="F")
+    vec_r, relax_r = _design_with_relax(backbone, pos=edit_start, direction="R")
+    for label, got, relax, side in (
+        ("vec_F", vec_f, relax_f, "右接点（RE 侧）"),
+        ("vec_R", vec_r, relax_r, "左接点（LE 侧）"),
+    ):
+        if got is None:
+            alts = _junction_alternatives(
+                backbone, junction=(edit_end if side.startswith("右") else edit_start),
+                direction=("F" if side.startswith("右") else "R"))
+            hint = ""
+            if alts:
+                hint = ("可用的替代端点：" + "、".join(
+                    f"{a['pos']:,}（留 {a['gap']} bp 骨架间隔，L={a['length']} "
+                    f"Tm={a['tm']:.1f} GC={a['gc']*100:.0f}%）" for a in alts))
+            raise ValueError(
+                f"{label} 在 {side} 找不到可用引物（连放宽窗口也无解）。\n"
+                f"  该接点被构建方式钉死，不能随意挪动。{hint or ''}")
+        warnings.append(
+            f"{label}：{side} L={got['length']} nt，Tm≈{got['tm']:.1f} °C，"
+            f"GC {got['gc']*100:.0f}%，3' 端位点 "
+            f"{len(_sites(got['seq'], backbone, PRIMER_ANCHOR_LEN))} 处")
+        if relax:
+            warnings.append(f"⚠️ {label}：{relax}")
+            alts = _junction_alternatives(
+                backbone, junction=(edit_end if side.startswith("右") else edit_start),
+                direction=("F" if side.startswith("右") else "R"))
+            if alts:
+                warnings.append(
+                    f"    若不接受加长/AT 富集的引物，可把该端点挪到 "
+                    f"{alts[0]['pos']:,}（留 {alts[0]['gap']} bp 骨架间隔）—— "
+                    f"那时 L={alts[0]['length']}、Tm={alts[0]['tm']:.1f}、"
+                    f"GC {alts[0]['gc']*100:.0f}%，落在常规窗口内。\n"
+                    f"    ⚠️ 代价是 LE/RE 与 cargo 之间**多出 {alts[0]['gap']} bp 骨架序列**，"
+                    f"该间隔是否影响转座末端识别**未经验证**，需自行评估。")
+
+    # ---------- cargo 片段 ----------
+    up_ov = backbone[edit_start - overlap_len:edit_start]
+    dn_ov = backbone[edit_end:edit_end + overlap_len]
+    cargo_f = up_ov + cargo[:21]
+    cargo_r = _revcomp(dn_ov) + _revcomp(cargo[-21:])
+
+    frags = [
+        {"name": "Fragment 1（载体）", "desc": "载体线性化（跨环，已去掉被替换段）",
+         "span": [edit_end, n], "length": vec_len,
+         "primers": [
+             {"name": "vec_F", "role": "载体正向，5' 端在右接点（自由端）",
+              "dir": "F", **{k: vec_f[k] for k in ("seq", "tm", "gc", "length")},
+              "from_sop": False, "pos": edit_end},
+             {"name": "vec_R", "role": "载体反向，3' 端在左接点（固定端）",
+              "dir": "R", **{k: vec_r[k] for k in ("seq", "tm", "gc", "length")},
+              "from_sop": False, "pos": edit_start},
+         ]},
+        {"name": "Fragment 2（cargo）", "desc": f"cargo（{cargo_name}）+ 两侧同源臂",
+         "span": [edit_start, edit_end], "length": len(cargo),
+         "primers": [
+             {"name": f"{cargo_name}_F", "role": "cargo 正向（含上游同源臂）",
+              "dir": "F", "seq": cargo_f, "length": len(cargo_f),
+              "tm": _tm_basic(cargo_f), "gc": _gc(cargo_f),
+              "from_sop": False, "pos": edit_start},
+             {"name": f"{cargo_name}_R", "role": "cargo 反向（含下游同源臂 rc）",
+              "dir": "R", "seq": cargo_r, "length": len(cargo_r),
+              "tm": _tm_basic(cargo_r), "gc": _gc(cargo_r),
+              "from_sop": False, "pos": edit_end},
+         ]},
+    ]
+
+    checks = [
+        {"junction": "J1  vec_R 3' ↔ cargo_F 5'（左接点）",
+         "a": backbone[edit_start - overlap_len:edit_start],
+         "b": cargo_f[:overlap_len]},
+        {"junction": "J2  cargo_R 5' ↔ vec_F 5'（右接点）",
+         "a": backbone[edit_end:edit_end + overlap_len],
+         "b": _revcomp(cargo_r[:overlap_len])},
+    ]
+    for c in checks:
+        c["ok"] = c["a"].upper() == c["b"].upper()
+        c["len"] = len(c["a"])
+        c["gc"] = _gc(c["a"])
+        arms = _sites(c["a"], backbone)
+        c["arm_sites"] = len(arms)
+        c["arm_pos"] = arms
+        if c["ok"] and c["len"] < MIN_OVERLAP_LEN:
+            warnings.append(f"{c['junction']} 同源区仅 {c['len']} bp，低于推荐下限 {MIN_OVERLAP_LEN}")
+        if c["ok"] and c["arm_sites"] > 1:
+            warnings.append(
+                f"⚠️ {c['junction']} 的同源区在骨架上出现 {c['arm_sites']} 处"
+                f"（{c['arm_pos']}）—— Gibson 时有两个可退火位置，可能装配错。")
+    if not all(c["ok"] for c in checks):
+        warnings.append("🔴 **存在不一致的同源区** —— 按此下单 Gibson 会失败。")
+
+    specificity: list[dict] = []
+    for fr in frags:
+        for pr in fr["primers"]:
+            tmpl = cargo if fr["name"].startswith("Fragment 2") else backbone
+            row = _spec_row(pr["name"], pr["seq"], tmpl,
+                            from_sop=False,
+                            template_label="cargo" if tmpl is cargo else "psh4300C")
+            specificity.append(row)
+            if row["verdict"] != "OK":
+                warnings.append(
+                    f"🔴 {pr['name']} 的 3' 端 {PRIMER_ANCHOR_LEN} nt 有 "
+                    f"{row['anchor_sites']} 个结合位点 —— 会从多处起始扩增，不要下单。")
+
+    return {"kind": "2fragment", "fragments": frags, "checks": checks,
+            "specificity": specificity, "warnings": warnings,
+            "overlap_shift": None,
+            "edit_start": edit_start, "edit_end": edit_end,
+            "total_len": vec_len + len(cargo)}
 
 
 def _spec_row(name: str, seq: str, template: str, *, from_sop: bool,

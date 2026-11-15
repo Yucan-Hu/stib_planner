@@ -183,6 +183,59 @@ check("移除 CmR" in joined_l, "after_le 明确报告会移除 CmR")
 check("CmR 完好" not in joined_l, "after_le 不再出现「CmR 完好」",
       "仍含「CmR 完好」" if "CmR 完好" in joined_l else "")
 
+# ── I. 锚序列归一化与方向（v0.0.6 修的两个真 bug）──
+print("\n[I] 锚序列的空白与方向")
+L_A = "ACATGCAACTGTCTAGAATGCGAG"
+R_A = "GTGGCCTATCAAGATTACCCG"
+plus_left = seq[8866 - 24:8866]
+check(resolve_insertion_anchors(seq, plus_left, R_A) == (8866, 8888),
+      "+链左锚（无空格）→ 8,866")
+check(resolve_insertion_anchors(seq, plus_left[:12] + " " + plus_left[12:], R_A)
+      == (8866, 8888),
+      "内部空格不再造成边界偏移", "早期版本会 +1 bp")
+check(resolve_insertion_anchors(seq, L_A, "GTGGCCTAT\nCAAGATTACCCG") == (8866, 8888),
+      "换行能被识别")
+_d = {}
+resolve_insertion_anchors(seq, L_A, R_A, details=_d)
+check(_d["left"]["strand"] == "-" and _d["right"]["strand"] == "+",
+      "details 回报了每条锚的匹配链",
+      f"{_d['left']['strand']}/{_d['right']['strand']}")
+check(_d["left"]["boundary"] == 8866 and _d["right"]["boundary"] == 8888,
+      "details 回报的边界与返回值一致")
+
+# ── J. 整段替换走两片段方案（after_le）──
+print("\n[J] after_le 的全段替换（两片段）")
+cm_fe, plan_fe, warns_fe = build_construct_map(
+    spec, seq, feats, cargo=cargo, cargo_name=cname, site_id="after_le")
+sch_fe = plan_fe.scheme
+check(sch_fe is not None and sch_fe.get("kind") == "2fragment",
+      "after_le 采用两片段方案",
+      f"kind={sch_fe.get('kind') if sch_fe else None}")
+if sch_fe:
+    n_pr = sum(len(fr["primers"]) for fr in sch_fe["fragments"])
+    check(n_pr == 4, "共 4 条引物（载体 2 + cargo 2）", f"实际 {n_pr}")
+    check(len(sch_fe["checks"]) == 2, "只有 2 处同源区", f"实际 {len(sch_fe['checks'])}")
+    check(all(c["ok"] for c in sch_fe["checks"]), "两处同源区序列一致")
+    check(all(c.get("arm_sites", 1) == 1 for c in sch_fe["checks"]),
+          "两处同源臂在骨架上唯一")
+    bad = [r for r in sch_fe["specificity"] if r["verdict"] != "OK"]
+    check(not bad, "4 条引物的 3' 端全部唯一",
+          "；".join(f"{r['name']}={r['anchor_sites']}" for r in bad) or "全部 = 1")
+    check(sch_fe["total_len"] == len(seq) - (9784 - 8590) + len(cargo),
+          "组装总长 = 载体 - 被替换段 + cargo", f"{sch_fe['total_len']:,}")
+    used = [pr["name"] for fr in sch_fe["fragments"] for pr in fr["primers"]
+            if pr.get("from_sop")]
+    check(not used, "两片段方案不占用 GA725 / Cargo1 / GA778", f"实际 {used}")
+    # AT 富集的接点必须被明确告知
+    joined = " ".join(sch_fe["warnings"])
+    check("放宽" in joined, "AT 富集接点的放宽已写明")
+    check("骨架间隔" in joined, "给出了「留骨架间隔」的替代参数")
+    for fr in sch_fe["fragments"]:
+        for pr in fr["primers"]:
+            print(f"    {pr['dir']} {pr['name']:<12} L={len(pr['seq']):<3} "
+                  f"Tm={pr['tm']:.1f}")
+check(not any(f.name == "CmR" for f in cm_fe.features), "after_le 确实移除了 CmR")
+
 # ── 汇总 ──
 print("\n" + "=" * 74)
 width = max(len(n) for _, n, _ in rows)
