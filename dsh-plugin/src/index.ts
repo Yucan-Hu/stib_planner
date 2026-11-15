@@ -164,6 +164,61 @@ async function runCli(
 const GENOME_EXTS = ['.gb', '.gbk', '.gbff', '.genbank', '.fasta', '.fa', '.fna', '.fas']
 
 /**
+ * 把用户给的**输入文件路径**解析成绝对路径。
+ *
+ * 为什么要这一步：CLI 的工作目录是插件目录，用户写 `testdata/x.fa` 这种
+ * 相对路径时，若原样透传就会在插件目录下找不到。而 `accession` 参数
+ * 早就做了多基点探测 —— 两者行为必须一致，否则同一个相对路径有的参数
+ * 能用、有的报 FileNotFound。
+ *
+ * 解析顺序：绝对路径 / `~` → 插件目录 → 其上一级（仓库布局）→ 当前工作目录。
+ * 全都不存在时返回"插件目录下的那个"，让 Python 报出更具体的错。
+ */
+function resolveInputPath(config: Config, p: string | undefined): string {
+  const raw = (p ?? '').trim()
+  if (!raw) return raw
+  if (/^([A-Za-z]:[\\/]|\/)/.test(raw)) return raw
+  if (raw.startsWith('~')) {
+    try {
+      return join(homedir(), raw.slice(1))
+    } catch {
+      // 取不到 home 就按相对路径继续
+    }
+  }
+
+  const bases: string[] = [resolvePlannerDir(config)]
+  const parent = dirname(resolvePlannerDir(config))
+  if (parent && parent !== resolvePlannerDir(config)) bases.push(parent)
+  try {
+    const cwd = process.cwd()
+    if (cwd) bases.push(cwd)
+  } catch {
+    // 忽略
+  }
+
+  for (const b of [...new Set(bases)]) {
+    const cand = join(b, raw)
+    if (fileExists(cand)) return cand
+  }
+  return join(bases[0]!, raw)
+}
+
+/** 输出目录：相对路径按插件目录解析；留空则用 `<插件目录>/out`。 */
+function resolveOutputDir(config: Config, p: string | undefined): string {
+  const raw = (p ?? '').trim()
+  if (!raw) return join(resolvePlannerDir(config), 'out')
+  if (/^([A-Za-z]:[\\/]|\/)/.test(raw)) return raw
+  if (raw.startsWith('~')) {
+    try {
+      return join(homedir(), raw.slice(1))
+    } catch {
+      // fallthrough
+    }
+  }
+  return join(resolvePlannerDir(config), raw)
+}
+
+/**
  * 把用户给的 `accession` 解析成实际基因组文件路径。
  *
  * 支持三种写法 —— 早期版本只会做第 3 种，于是 `.gb` 路径永远进不去：
@@ -829,13 +884,22 @@ export function apply(ctx: Context, config: Config): void {
       render: (_a, v) => [{ type: 'text', text: v.content }],
     },
     async execute(args, exec) {
-      const cli = ['cargo', '--cargo', args.cargoFasta, '--backbone', args.backbone]
+      // ⚠️ 三个路径参数都必须**解析成绝对路径**再交给 CLI ——
+      //    否则 CLI 会在插件目录下找相对路径（`testdata/xxx`）而必然失败。
+      //    早期版本只解析了 `accession`（基因组），cargoFasta/backbone 原样透传，
+      //    于是"同样的相对路径写法，accession 能用、这两个却报 FileNotFound"。
+      const cli = [
+        'cargo',
+        '--cargo', resolveInputPath(config, args.cargoFasta),
+        '--backbone', resolveInputPath(config, args.backbone),
+      ]
       if (args.spec) cli.push('--spec', args.spec)
       if (args.site) cli.push('--site', args.site)
       if (args.cargoStrand !== undefined) cli.push('--cargo-strand', String(args.cargoStrand))
       if (args.listSites) cli.push('--list-sites')
       if (args.overlapLen !== undefined) cli.push('--overlap-len', String(args.overlapLen))
-      cli.push('--out', args.outDir ?? `${resolvePlannerDir(config)}/out`)
+      // 输出目录同理：相对路径按 plannerDir 解析，避免落到意料之外的位置
+      cli.push('--out', resolveOutputDir(config, args.outDir))
       const r = await runCli(ctx, config, cli, exec.signal)
       return { ok: r.ok, content: r.ok ? r.stdout : failText(r) }
     },

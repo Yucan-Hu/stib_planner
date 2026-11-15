@@ -344,6 +344,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         genome=g, gene=args.gene, start=span[0], end=span[1],
         species=args.species, top_n=args.top,
         max_mismatch=args.max_mismatch, community_editing=args.community, kb=kb,
+        region_method=str(solver.get("method") or "gene"),
     )
     plan.meta["genome_len"] = len(g)     # 供可视化层画全基因组视图
 
@@ -769,17 +770,17 @@ def cmd_cargo(args: argparse.Namespace) -> int:
         if rows:
             print()
             print(f"=== 引物特异性（3' 末端 {rows[0]['anchor_len']} nt 的结合位点数，必须为 1）===")
-            print(f"  {'引物':<14}{'模板':<10}{'长度':>4}{'3端位点':>8}{'全长位点':>9}  位置   判定")
+            print(f"  {'引物':<17}{'模板':<10}{'长度':>4}{'3端位点':>8}{'全长位点':>9}  位置   判定")
             for row in rows:
                 pos = row["anchor_pos"][0] if row["anchor_pos"] else "—"
                 flag = "OK" if row["verdict"] == "OK" else f"⚠ {row['anchor_sites']} 个位点"
-                print(f"  {row['name']:<14}{row['template']:<10}{row['length']:>4}"
+                print(f"  {row['name']:<17}{row['template']:<10}{row['length']:>4}"
                       f"{row['anchor_sites']:>8}{row['full_sites']:>9}  {str(pos):<6} {flag}")
             if any(r["verdict"] != "OK" for r in rows):
                 print("  🔴 有引物不唯一 —— 不要下单。见下方警告。")
 
         print()
-        print("=== 同源区检查（3 处，必须完全一致）===")
+        print(f"=== 同源区检查（{len(sch['checks'])} 处，必须完全一致）===")
         for c in sch["checks"]:
             arm = "臂唯一" if c.get("arm_sites", 1) == 1 else f"⚠ 臂 {c['arm_sites']} 处"
             print(f"  {'OK ' if c['ok'] else 'FAIL'} {c['junction']}  "

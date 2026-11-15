@@ -20,7 +20,7 @@
 
 ---
 
-## 1. 现状快照（2026-11-16，v0.0.7）
+## 1. 现状快照（2026-11-16，v0.0.8）
 
 ### 已经过验证的
 
@@ -31,7 +31,8 @@
 | 论文锚点 | 10/10（Table S2 已发表 sgRNA 能被重新发现） |
 | 引物特异性 | 13/13（`scripts/verify_primer_specificity.py`） |
 | 任意插入位点 / 两片段方案 | 39/39（`scripts/verify_insertion_anchors.py`） |
-| 插件（DSH 0.2.2-rc.3） | tsc=0，四个冒烟全过，`plugin list` 无兼容性警告 |
+| 插件（DSH 0.2.2-rc.3） | tsc=0，五个冒烟全过，`plugin list` 无兼容性警告 |
+| **三类插入任务端到端** | ✅ 中性位点 / 保留 CmR / 不保留 CmR 各跑通一次（见 §9 v0.0.8） |
 | 单元自检 | 7/7（`python -m stib.seqfeatures`） |
 
 ### **完全没有验证过的**
@@ -43,7 +44,7 @@
 
 ### 发布状态
 
-- 本地 `main` 已到 `v0.0.7`，**领先远程 5 个提交未推送**。
+- 本地 `main` 已到 `v0.0.8`，**领先远程 6 个提交未推送**。
 - GitHub：<https://github.com/Yucan-Hu/stib_planner>（远程停在 `65a6a94`）。
 
 ---
@@ -302,5 +303,6 @@ P1-1 决定 Mac 用户敢不敢用；湿实验放在最后不是因为不重要�
 | v0.0.3 | 修 `DSH_HOME` 不可见导致的 Python 探测失败；修相对路径；FASTA 的 BOM | `node dsh-plugin/smoke-live.mjs` |
 | v0.0.4 | 插入位点边界改用 Cargo1/GA778 端点；引物特异性硬约束（3' 端 15 nt 唯一） | `python scripts/verify_primer_specificity.py` |
 | v0.0.5 | 任意插入位点（两侧锚序列 / 坐标）+ LE–RE 校验 | `python scripts/verify_insertion_anchors.py` |
+| v0.0.8 | **首次三类任务端到端自检**（中性位点 / 保留 CmR / 不保留 CmR），修掉自检暴露的 4 个问题：① 插件里 `cargoFasta`/`backbone`/`outDir` 相对路径未解析（与 `accession` 行为不一致，必然 FileNotFound）；② CLI 同源区处数硬编码「3 处」；③ 引物特异性表列宽 14 不够（`cargo600_test_F` 挤进模板列）；④ 中性位点/坐标目标的落点被标成「CDS 前 1/3–2/3」——那里根本没有 CDS | `python -m stib.cli cargo ...`；`node dsh-plugin/smoke-cargo-path.mjs` |
 | v0.0.7 | **原 P0-2**：`after_le` 整段替换改用**两片段**方案（载体线性化 + cargo，4 条引物）；AT 富集接点自动放宽并在报告里给出「留骨架间隔」的替代参数 | `python scripts/verify_insertion_anchors.py`（`[J]` 组） |
 | v0.0.6 | **原 P0-1**：默认位点改为 `after_selection`（保留 CmR），并删掉 `else` 分支里硬编码的「保留氯霉素筛选」文案 —— CmR 结论只由一处判定回答，不再自相矛盾 | `python scripts/verify_insertion_anchors.py`（`[H]` 组） |

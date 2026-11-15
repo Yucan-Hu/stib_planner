@@ -681,7 +681,9 @@ def make_plan(genome: GenomeIndex, gene: str, start: int, end: int,
               top_n: int = 5,
               max_mismatch: int = 4,
               community_editing: bool = False,
-              kb: KnowledgeBase | None = None) -> Plan:
+              kb: KnowledgeBase | None = None,
+              #: 区间来源：gene / motif / coordinates。落点文案要据此区分。
+              region_method: str = "gene") -> Plan:
     """
     生成完整编辑方案。
 
@@ -801,6 +803,10 @@ def make_plan(genome: GenomeIndex, gene: str, start: int, end: int,
     target = {
         "gene": gene,
         "species": species,
+        #: 区间是怎么来的：gene / motif / coordinates。
+        #: ⚠️ 落点分类的文案要据此区分 —— 目标是**基因间区/中性位点**时，
+        #:    再说「CDS 前 1/3–2/3」会误导（那里根本没有 CDS）。
+        "region_method": region_method,
         "span": [start, end],
         "span_len": end - start,
         "selected_spacer": best.spacer,

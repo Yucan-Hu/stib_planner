@@ -11,7 +11,7 @@ abstract: >
   可下单的寡核苷酸与引物、可照着做的定制实验协议，以及 SnapGene 图谱。
   已实现为独立 CLI 与 DeepSeek Harness 插件。
 type: software
-version: "0.0.7"
+version: "0.0.8"
 date-released: "2026-10-09"
 license: MIT
 

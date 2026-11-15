@@ -103,8 +103,14 @@ def render_markdown(plan: Plan, title: str | None = None) -> str:
             risk_s = f"🔴 {risk:.2f}"
         other_s = "✅ 0（仅自身）" if c.n_other == 0 else f"{c.n_other} 个"
         pam_s = {1: "① GTT", 2: "② GTA"}.get(c.pam_tier, "③ 其他")
-        place_s = {"strict": "★严格区", "central80": "中段80%",
-                   "in_gene": "基因端部5%", "outside": "基因外"}.get(c.placement, c.placement)
+        _cds = plan.target.get("region_method", "gene") == "gene"
+        place_s = (
+            {"strict": "★严格区", "central80": "中段80%",
+             "in_gene": "基因端部5%", "outside": "基因外"}
+            if _cds else
+            {"strict": "★区间中央", "central80": "区间中段80%",
+             "in_gene": "区间端部5%", "outside": "区间外"}
+        ).get(c.placement, c.placement)
         sf = c.seq_features.as_dict() if c.seq_features else {}
         bits = []
         if sf.get("tsd_preferred_GCWGC"):
@@ -115,9 +121,15 @@ def render_markdown(plan: Plan, title: str | None = None) -> str:
         L.append(f"| {i}{star} | `{s.spacer}` | `{s.pam}` | {pam_s} | {place_s} | "
                  f"{s.gc:.0%} | {seq_s} | {risk_s} | {other_s} |")
     L.append("")
-    L.append("★ = 推荐首选。**落点两级制**：「★严格区」= 插入位点落在 CDS **前 1/3 – 2/3**"
-             "（论文做法，优先满足）；严格区不满足时回落到「中段80%」"
-             "（**排除 CDS 前 5% 与后 5%**）的普通约束。")
+    if plan.target.get("region_method", "gene") == "gene":
+        L.append("★ = 推荐首选。**落点两级制**：「★严格区」= 插入位点落在 CDS "
+                 "**前 1/3 – 2/3**（论文做法，优先满足）；严格区不满足时回落到"
+                 "「中段80%」（**排除 CDS 前 5% 与后 5%**）的普通约束。")
+    else:
+        L.append("★ = 推荐首选。**落点两级制**（本次目标是**非基因区间** —— "
+                 "中性位点 / 基因间区，没有 CDS 可言）：「★区间中央」= 插入位点"
+                 "落在该区间**前 1/3 – 2/3**；不满足时回落到「区间中段80%」"
+                 "（排除区间前后各 5%）。")
     L.append("")
     L.append("**PAM 优选**：① GTT（课题组经验最多）→ ② GTA → ③ 其他 GTN。")
     L.append("")
