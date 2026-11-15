@@ -1,11 +1,12 @@
 # dsh-stib-planner — bundle 层
 #
-# ★ 默认**不需要任何配置**：Python 代码随包发布在 `stib/`，
-#   插件用 `import.meta.url` 自定位；Python 解释器也会自动探测
-#   （PATH 上的 python3/python，再到 DSH 自带的运行时，取第一个 3.10+）。
+# ★ 默认**不需要任何配置**：
+#   - Python 代码随包发布在 `stib/`，插件用 `import.meta.url` 自定位
+#   - Python 解释器自动探测：PATH 上的 python3/python → DSH 自带运行时
+#     → macOS Homebrew → 带小版本的命令名，取第一个 **3.10+** 的
 #
 # 只有下面这些情况才需要取消注释并填写：
-#   - 想指定某个解释器（例如机器上装了多个 Python）
+#   - 机器上有多个 Python，想指定其中一个
 #   - 想改用仓库里的另一份 Python 代码（其下应有 `stib/`）
 #   - 想把基因组缓存放到别处
 #
@@ -19,7 +20,7 @@
     - id: stib-planner
       name: dsh-stib-planner
       config:
-        # python: python3
+        # python: /usr/local/bin/python3
         # plannerDir: /path/to/dir-containing-stib
         # dataDir: /path/to/genome-cache
         timeoutMs: 300000

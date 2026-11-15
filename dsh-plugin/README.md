@@ -60,13 +60,43 @@ DeepSeek Harness 插件：**拟杆菌 STIB 基因编辑方案生成器**。
 
 | 配置项 | 默认行为 | 什么时候要填 |
 |---|---|---|
-| `python` | 自动探测：`python3` → `python` → DSH 自带运行时，取第一个 **3.10+** 的 | 机器上有多个 Python，想指定其中一个 |
+| `python` | 自动探测（见下），取第一个 **3.10+** 的 | 机器上有多个 Python，想指定其中一个 |
 | `plannerDir` | **插件包根目录**（其下就是随包发布的 `stib/`） | 想改用仓库里另一份 Python 代码 |
 | `dataDir` | `<插件目录>/data` | 想把基因组缓存放到别处 |
 
-> **为什么要自动探测**：Windows 上 PATH 里的 `python` 可能是 3.9
-> （本机实测就是），而 CLI 需要 3.10+，直接用会莫名失败。
-> DSH 自带运行时是 3.12，所以把它列入候选。
+### Python 解释器是怎么找到的
+
+按顺序探测，第一个满足 `>= 3.10` 的胜出（结果缓存，只探一次）：
+
+1. `python3`、`python`（PATH 上）
+2. **DSH 自带运行时**：`<home>/dsh-runtimes/*/dependencies/python/{python.exe, bin/python3}`
+   - `<home>` 依次取 `DSH_HOME`、`~/.dsh`、`DSH_PROFILE_DIR` 的上两级
+   - ⚠️ **只靠 `DSH_HOME` 不够**：实测插件运行在 Host 进程里时看不到该变量
+     （它只注入给终端/工具会话），所以必须有 `~/.dsh` 这个与进程环境无关的兜底
+3. macOS：`/opt/homebrew/bin/python3`（Apple Silicon）、`/usr/local/bin/python3`
+4. 带小版本的名字：`python3.13` → `python3.10`
+
+> **为什么必须探测而不是直接用 `python`**：
+> Windows 上 PATH 里的 `python` 常见是 **3.9**（本机实测 3.9.2）；
+> macOS 上 Xcode 命令行工具自带的 `python3` 是 **3.9.6**。
+> 两者都低于要求的 3.10，直接用会以看不懂的方式失败。
+> DSH 自带运行时是 3.12，所以把它列为主要候选。
+
+### 平台支持
+
+| 平台 | 状态 | 说明 |
+|---|---|---|
+| Windows | ✅ 已实测 | Python 3.12（DSH 自带） |
+| macOS | ⚠️ 代码已按 POSIX 路径写，**未实机验证** | 探测候选含 Homebrew 与 `bin/python3` 布局 |
+| Linux | ⚠️ 同上 | 依赖 PATH 上的 python3 或 DSH 自带运行时 |
+
+跨平台相关的实现要点（已逐项核对）：
+
+- 路径全部走 `path.join` / `os.path.join`，**没有**字符串拼 `/`
+- Python 侧所有文本写入都显式 `encoding="utf-8", newline="\n"`（两平台都出 LF）
+- `.dna` 用**二进制**写入，不受换行转换影响
+- 读文件用 `utf-8-sig`，**带 BOM 也不会污染首条记录**
+- 无 `sys.platform` 分支、无 `winreg`/`msvcrt`、无外部命令调用
 
 **工具里的 `accession` 参数支持三种写法**：
 

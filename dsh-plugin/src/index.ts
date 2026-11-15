@@ -37,6 +37,7 @@
  */
 
 import { existsSync, readdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -168,7 +169,8 @@ const GENOME_EXTS = ['.gb', '.gbk', '.gbff', '.genbank', '.fasta', '.fa', '.fna'
  * 支持三种写法 —— 早期版本只会做第 3 种，于是 `.gb` 路径永远进不去：
  *
  *   1. **绝对路径**（含 .gb/.fasta 等扩展名）→ 原样使用
- *   2. **相对路径 / 带目录** → 相对 `plannerDir` 解析
+ *   2. **相对路径 / 带目录** → 在插件目录、其上一级（仓库布局）、dataDir、
+ *      当前工作目录下依次探测，命中即用
  *   3. **裸 accession**（如 `NC_004663.1`）→ 在 `dataDir` 下按已知扩展名探测：
  *        - 命中唯一文件 → 用它（**这样 .gb / .gbk 缓存也能被发现**）
  *        - 全都没命中 → 报错并列出找过的路径，而不是静默拼一个 `.fasta`
@@ -177,28 +179,63 @@ function resolveGenome(config: Config, accession: string): string {
   const dataDir = resolveDataDir(config)
   const a = accession.trim()
 
-  // 1) 绝对路径
+  // 0) `~` 展开 —— macOS / Linux 上最常见的写法（Windows 用户一般不会写）
+  if (a === '~' || a.startsWith('~/') || a.startsWith('~\\')) {
+    try {
+      return join(homedir(), a.slice(1))
+    } catch {
+      // 取不到 home 就按原样继续，让后面的分支产生可诊断的报错
+    }
+  }
+
+  // 1) 绝对路径（Windows 盘符 或 POSIX 根）
   if (/^([A-Za-z]:[\\/]|\/)/.test(a)) return a
 
   const lower = a.toLowerCase()
 
-  // 2) 带目录的相对路径
+  // 2) 带目录的相对路径 —— 在多个基点下探测，命中即用
+  //
+  //    ⚠️ 不能只相对 plannerDir：插件默认的 plannerDir 是**插件包目录**，
+  //    而仓库布局里示例数据在 `<repo>/testdata/`（包目录的上一级）。
+  //    只用一个基点会让 `testdata/mini.gb` 这种写法直接失效。
   if (a.includes('/') || a.includes('\\')) {
-    return `${resolvePlannerDir(config)}/${a}`
+    const pluginDir = resolvePlannerDir(config)
+    const bases: string[] = [pluginDir]
+    const parent = dirname(pluginDir)
+    if (parent && parent !== pluginDir) bases.push(parent)   // 仓库布局
+    bases.push(dataDir)
+    try {
+      const cwd = process.cwd()
+      if (cwd) bases.push(cwd)                               // 相对当前工作目录
+    } catch {
+      // 取不到 cwd 就跳过
+    }
+
+    for (const base of [...new Set(bases)]) {
+      const cand = join(base, a)
+      if (fileExists(cand)) return cand
+    }
+
+    throw new Error(
+      `找不到基因组文件：${a}\n` +
+      `已尝试的基准目录：\n` +
+      [...new Set(bases)].map((b) => `  - ${b}`).join('\n') +
+      `\n\n最省事的做法是直接给出**绝对路径**（.gb / .fasta 均可）。`,
+    )
   }
 
   // 3) 裸文件名：已带已知扩展名 → 去 dataDir 找
   if (GENOME_EXTS.some((e) => lower.endsWith(e))) {
-    return `${dataDir}/${a}`
+    return join(dataDir, a)
   }
 
   // 4) 裸 accession → 探测 dataDir 下是否存在任一已知扩展名
   for (const ext of GENOME_EXTS) {
-    const cand = `${dataDir}/${a}${ext}`
+    const cand = join(dataDir, `${a}${ext}`)
     if (fileExists(cand)) return cand
   }
   // 探测 `a` 本身就是完整文件名（无扩展名时也可能存在）
-  if (fileExists(`${dataDir}/${a}`)) return `${dataDir}/${a}`
+  if (fileExists(join(dataDir, a))) return join(dataDir, a)
 
   throw new Error(
     `找不到基因组文件。已尝试在 ${dataDir} 下查找 ` +
@@ -245,36 +282,88 @@ function resolveDataDir(config: Config): string {
 }
 
 /**
+ * DSH 主目录（可能多个），用于定位**自带 Python 运行时**。
+ *
+ * ⚠️ 不能只依赖 `DSH_HOME`：实测插件运行在 Host 进程里时**看不到该变量**
+ *    （它只注入给终端/工具会话），所以必须有与进程环境无关的兜底 ——
+ *    DSH 的默认 home 就是 `~/.dsh`。
+ *
+ * 依次来源：
+ *   1. `DSH_HOME` 环境变量（若可见）
+ *   2. `~/.dsh`（Windows / macOS / Linux 的默认位置）
+ *   3. `DSH_PROFILE_DIR` 的上两级（`<home>/profiles/<name>`）
+ */
+function dshHomes(): string[] {
+  const out: string[] = []
+
+  const envHome = (process.env.DSH_HOME ?? '').trim()
+  if (envHome) out.push(envHome)
+
+  try {
+    const h = homedir()
+    if (h) out.push(join(h, '.dsh'))
+  } catch {
+    // 极端情况下取不到 home，忽略
+  }
+
+  const profileDir = (process.env.DSH_PROFILE_DIR ?? '').trim()
+  if (profileDir) out.push(dirname(dirname(profileDir)))
+
+  return [...new Set(out)]
+}
+
+/** `dsh-runtimes/<runtime>/dependencies/python/` 下解释器的相对路径（覆盖两平台布局）。 */
+const PYTHON_RELATIVE = [
+  ['dependencies', 'python', 'python.exe'],      // Windows 打包版
+  ['dependencies', 'python', 'python'],         // 无扩展名的 POSIX 布局
+  ['dependencies', 'python', 'bin', 'python3'], // macOS / Linux 打包版
+  ['dependencies', 'python', 'bin', 'python'],
+]
+
+/**
  * 候选 Python 解释器，按优先级排列。
  *
  * 显式配置时**只用它** —— 用户说了算，失败也要报清楚，不能悄悄换一个。
- * 否则依次尝试：PATH 上的 `python3` / `python`，再到 DSH 自带运行时。
  *
- * ⚠️ 为什么必须探测而不是直接用 `python`：Windows 上 PATH 里的 `python`
- *    可能是 3.9（本机实测就是），而 CLI 需要 3.10+，直接跑会莫名失败。
- *    而 DSH 自带 3.12 —— 用户机器上很可能只有这个能用。
+ * ⚠️ 为什么必须探测而不是直接用 `python`：
+ *    - Windows 上 PATH 里的 `python` 常见是 **3.9**（本机实测 3.9.2）
+ *    - macOS 上 Xcode 命令行工具自带的 `python3` 是 **3.9.6**
+ *    两者都低于 CLI 要求的 3.10，直接用会莫名失败。
+ *    DSH 自带运行时是 3.12，所以把它列为主要候选。
  */
 function pythonCandidates(config: Config): string[] {
   const explicit = (config.python ?? '').trim()
   if (explicit) return [explicit]
 
-  const list = ['python3', 'python']
+  const list: string[] = ['python3', 'python']
 
-  // DSH 自带运行时：<DSH_HOME>/dsh-runtimes/<runtime>/dependencies/python/python(.exe)
-  // 运行时目录名随发行版变化，所以枚举而不是写死。
-  const home = process.env.DSH_HOME
-  if (home) {
-    for (const exe of ['python.exe', 'bin/python3', 'python']) {
-      try {
-        for (const d of readdirSync(join(home, 'dsh-runtimes'))) {
-          const p = join(home, 'dsh-runtimes', d, 'dependencies', 'python', exe)
-          if (fileExists(p)) list.push(p)
-        }
-      } catch {
-        // 没有 dsh-runtimes 目录就跳过
+  // DSH 自带运行时（枚举 runtime 目录，不写死名字）
+  for (const home of dshHomes()) {
+    const runtimesDir = join(home, 'dsh-runtimes')
+    let runtimes: string[]
+    try {
+      runtimes = readdirSync(runtimesDir)
+    } catch {
+      continue                      // 没有 dsh-runtimes 就跳过
+    }
+    for (const rt of runtimes) {
+      for (const rel of PYTHON_RELATIVE) {
+        const p = join(runtimesDir, rt, ...rel)
+        if (fileExists(p)) list.push(p)
       }
     }
   }
+
+  // macOS 上常见的、比系统自带更新的解释器
+  if (process.platform === 'darwin') {
+    list.push(
+      '/opt/homebrew/bin/python3',      // Apple Silicon Homebrew
+      '/usr/local/bin/python3',         // Intel Homebrew
+    )
+  }
+
+  // 带小版本的命令名（PATH 上有多个 Python 时往往能命中）
+  list.push('python3.13', 'python3.12', 'python3.11', 'python3.10')
 
   return [...new Set(list)]
 }
@@ -329,11 +418,16 @@ async function resolvePython(
   }
 
   throw new Error(
-    `找不到 Python ${MIN_PYTHON[0]}.${MIN_PYTHON[1]}+ 解释器，已尝试：\n` +
+    `找不到 Python ${MIN_PYTHON[0]}.${MIN_PYTHON[1]}+ 解释器。已尝试：\n` +
     tried.map((t) => `  - ${t}`).join('\n') +
-    `\n\n请在插件配置里显式指定，例如：\n` +
-    `  python: C:\\\\path\\\\to\\\\python.exe\n` +
-    `（Windows 上可用 \`py -3.12\` 或 DSH 自带的运行时。）`,
+    `\n\n已查找的 DSH 主目录：\n` +
+    dshHomes().map((h) => `  - ${h}`).join('\n') +
+    `\n\n解决办法：安装 Python 3.10+（创建虚拟环境或用系统包管理器也可），\n` +
+    `或在插件配置里显式指定解释器路径，例如：\n` +
+    `  python: /usr/local/bin/python3        # macOS\n` +
+    `  python: C:\\\\Python312\\\\python.exe       # Windows\n` +
+    `\n注意：Windows 上 \`py\` 启动器与 macOS 上系统自带的 python3\n` +
+    `可能是 3.9，低于本工具要求，需要另装较新版本。`,
   )
 }
 

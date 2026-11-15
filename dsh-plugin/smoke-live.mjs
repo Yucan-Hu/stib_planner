@@ -17,6 +17,17 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const PKG = resolve(here)
 
+// ⚠️ 关键：模拟 **Host 进程**的真实环境。
+//    实测插件跑在 Host 里时看不到 DSH_HOME（它只注入给终端/工具会话），
+//    所以这里主动删掉，验证「~/.dsh 兜底」是否真的有效。
+//    如果删掉后仍能跑通，说明用户机器上也能零配置工作。
+delete process.env.DSH_HOME
+delete process.env.DSH_PROFILE_DIR
+console.log('=== 0. 模拟 Host 环境（已移除 DSH_HOME / DSH_PROFILE_DIR）===')
+console.log('  DSH_HOME        =', process.env.DSH_HOME ?? '(未设置)')
+console.log('  DSH_PROFILE_DIR =', process.env.DSH_PROFILE_DIR ?? '(未设置)')
+console.log()
+
 /** 按 dsh-subprocess 的 collect 契约实现 spawn。 */
 function realSpawn(spec) {
   const [cmd, ...args] = spec.argv
@@ -125,6 +136,25 @@ if (genes && existsSync(join(PKG, '..', 'testdata', 'mini.gb'))) {
   console.log('  [SKIP] 缺少 testdata/mini.gb')
 }
 
+// ── 4. 相对路径解析（回归：默认 plannerDir 是插件目录，
+//       而 testdata/ 在仓库上一级 —— 只用单一基点会失效）──
 console.log()
-console.log(pass ? '===== 零配置端到端通过 =====' : '===== 失败 =====')
-process.exit(pass ? 0 : 1)
+console.log('=== 4. 相对路径 `testdata/mini.gb`（在默认 plannerDir 下）===')
+let ok4 = false
+if (genes) {
+  try {
+    const r3 = await genes.execute(
+      { accession: 'testdata/mini.gb', search: 'thr' }, { signal: undefined })
+    const t3 = genes.output.render({}, r3).map((b) => b.text ?? '').join('')
+    ok4 = /thrA/.test(t3)
+    console.log(`  ${ok4 ? 'PASS' : 'FAIL'}  相对路径能落到仓库的 testdata/`)
+    if (!ok4) console.log(t3.slice(0, 600))
+  } catch (e) {
+    console.log('  FAIL  抛错:', e.message.split('\n').slice(0, 5).join('\n         '))
+  }
+}
+
+const allOk = pass && ok4
+console.log()
+console.log(allOk ? '===== 零配置端到端通过 =====' : '===== 失败 =====')
+process.exit(allOk ? 0 : 1)

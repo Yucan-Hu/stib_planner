@@ -79,11 +79,17 @@ _COMPLEMENT = str.maketrans(
 # ---------------------------------------------------------------------------
 
 def read_fasta(path: str) -> dict[str, str]:
-    """读取 FASTA，返回 {seq_id: sequence}。序列统一转大写。"""
+    """
+    读取 FASTA，返回 {seq_id: sequence}。序列统一转大写。
+
+    ⚠️ 用 `utf-8-sig` 而不是 `utf-8`：带 BOM 的文件首行会是 `\ufeff>id`，
+    `startswith(">")` 为假 —— 整条首记录的头部会被误当成序列。
+    （Windows 上某些编辑器/Excel 导出会加 BOM。）
+    """
     seqs: dict[str, str] = {}
     name: str | None = None
     chunks: list[str] = []
-    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+    with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
         for line in fh:
             line = line.rstrip("\n\r")
             if not line:

@@ -127,6 +127,27 @@ default 导出存在: false                  ← 符合官方 AGENTS.md 的 bund
 "@deepseek-ai/schemastery": "~3.19.0"
 ```
 
+
+### v0.0.3 的两个运行期修复（实机暴露）
+
+**① 插件看不到 `DSH_HOME`，Python 自动探测失效。**
+原实现只用 `process.env.DSH_HOME` 定位 DSH 自带运行时。实测插件运行在
+Host 进程里时**没有该变量**（它只注入给终端/工具会话），于是探测失败，
+只能手工写死解释器路径。
+→ 改为多来源：`DSH_HOME` → **`~/.dsh`（与进程环境无关的兜底）** →
+`DSH_PROFILE_DIR` 的上两级；并补充 macOS Homebrew 与 `bin/python3` 布局。
+`smoke-live.mjs` 现在会**主动删掉 `DSH_HOME`** 来复现 Host 环境。
+
+**② 相对路径只按 `plannerDir` 解析，仓库布局下失效。**
+`plannerDir` 默认改成插件包目录后，`testdata/mini.gb` 被解析成
+`<插件>/testdata/mini.gb`（不存在），而文件实际在 `<repo>/testdata/`。
+→ 改为在**插件目录 → 其上一级 → dataDir → 当前工作目录**依次探测，
+命中即用；全部失败时报错列出试过的基准目录。
+
+**③ 顺带：FASTA 读取改用 `utf-8-sig`。**
+带 BOM 的文件首行会是 `\ufeff>id`，`startswith(">")` 为假，
+整条首记录的头部会被当成序列。已加回归用例。
+
 ### 从 `0.2.0-rc.2` 升到 `0.2.2-rc.3` 的实际记录（v0.0.2）
 
 只改版本号是**不够**的，必须重新核对 API。本次核对结果：
