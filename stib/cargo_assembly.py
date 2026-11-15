@@ -53,6 +53,143 @@ STRATEGY_KEEP_CMR = "keep_cmr"
 STRATEGY_REPLACE_SELECTION = "replace_selection"
 
 
+# ---------------------------------------------------------------------------
+# 任意插入位点：用两侧「锚序列」定位
+# ---------------------------------------------------------------------------
+#
+# 为什么需要这个：规范里的两个位点只是**两个常用落点**，不是全部可能。
+# 用户想说"插在这两段序列之间"时，让他给两条紧邻插入点的序列，
+# 比让他数坐标可靠得多 —— 换一个载体文件（注释版本不同）也不会错位。
+#
+# 语义（与 SOP 的两条引物一致）：
+#   anchor_left  —— 紧邻插入点**左侧**的序列，其 **3' 端**就是插入点
+#                   与 Cargo1 的语义相同（反向引物，3' 端落在左边界）
+#   anchor_right —— 紧邻插入点**右侧**的序列，其 **5' 端**就是插入点
+#                   与 GA778 的语义相同（正向引物，5' 端落在右边界）
+
+
+def _match_sites(seq: str, probe: str) -> list[tuple[int, str]]:
+    """probe 及其反向互补在 + 链上的全部匹配：[(起始坐标, '+'|'-')]。"""
+    probe = probe.upper()
+    out: list[tuple[int, str]] = []
+    i = seq.find(probe)
+    while i >= 0:
+        out.append((i, "+"))
+        i = seq.find(probe, i + 1)
+    rc = revcomp(probe)
+    if rc != probe:                      # 回文探针避免重复计
+        i = seq.find(rc)
+        while i >= 0:
+            out.append((i, "-"))
+            i = seq.find(rc, i + 1)
+    return sorted(out)
+
+
+def _locate_unique(seq: str, probe: str, label: str) -> tuple[int, str]:
+    """把锚序列定位到**唯一**位点；0 处或多处都报错并列出。"""
+    probe = probe.upper().replace(" ", "").strip()
+    if len(probe) < 12:
+        raise ValueError(
+            f"{label} 只有 {len(probe)} nt，太短 —— 至少给 12 nt，"
+            f"建议 20–30 nt（与引物退火段等长最可靠）。")
+    sites = _match_sites(seq, probe)
+    if not sites:
+        raise ValueError(
+            f"{label} 在载体上找不到：{probe}\n"
+            f"  确认它来自**这个**载体文件（大小写、正反方向都可能影响）。")
+    if len(sites) > 1:
+        where = "、".join(f"{p:,}({s}链)" for p, s in sites)
+        raise ValueError(
+            f"{label} 在载体上有 {len(sites)} 处匹配，无法唯一确定插入点：{where}\n"
+            f"  请给更长的序列（多 5–10 nt 通常就能区分），"
+            f"或改用坐标 `--replace-region START END`。")
+    return sites[0]
+
+
+def resolve_insertion_anchors(backbone_seq: str,
+                              anchor_left: str,
+                              anchor_right: str) -> tuple[int, int]:
+    """
+    用两侧锚序列求出插入区间 ``[start, end)``。
+
+    左锚的 3' 端 = 左边界；右锚的 5' 端 = 右边界。
+    两条锚的方向由它们在载体上的匹配链自动判定，用户按任一方向给都行。
+    """
+    lp, lstrand = _locate_unique(backbone_seq, anchor_left, "左锚序列")
+    rp, rstrand = _locate_unique(backbone_seq, anchor_right, "右锚序列")
+
+    # 左锚：3' 端贴着插入点
+    left = lp + len(anchor_left.strip()) if lstrand == "+" else lp
+    # 右锚：5' 端贴着插入点
+    right = rp if rstrand == "+" else rp + len(anchor_right.strip())
+
+    if left > right:
+        raise ValueError(
+            f"两条锚序列的顺序反了：左锚推出边界 {left:,}，右锚推出 {right:,}。\n"
+            f"  左锚应是插入点**上游**（5' 侧）的序列，右锚是**下游**（3' 侧）的序列。")
+    return left, right
+
+
+def validate_insertion_region(
+    spec: ConstructSpec,
+    backbone_features: list[dict],
+    edit_start: int,
+    edit_end: int,
+) -> tuple[list[str], list[str]]:
+    """
+    校验自定义插入区间。返回 (hard_errors, warnings)。
+
+    - **硬拒**：区间不在 LE 的 3' 端与 RE 的 5' 端之间 —— 那里的序列是转座子
+      末端识别区，插进去必然转座失败，而且失败要到接合才暴露。
+    - **告警**：区间覆盖了原本要保留的元件（CmR / PcfxA / rrnB 终止子等），
+      逐条列出被删掉的元件名与坐标。
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    le_end = spec.le.core_end
+    re_start = spec.re.core_start
+
+    if not (le_end <= edit_start <= edit_end <= re_start):
+        errors.append(
+            f"插入区间 {edit_start:,}–{edit_end:,} 不在 LE 与 RE 之间"
+            f"（允许范围 {le_end:,}–{re_start:,}）。\n"
+            f"  LE/RE 是转座子的末端识别序列，cargo 必须落在两者**之间**。"
+            f"插进末端会在接合后表现为零转化子，且此前所有 PCR 都正常。")
+
+    if edit_start == edit_end:
+        warnings.append(
+            f"ℹ️ 区间长度为 0（纯插入，不删除任何碱基）—— 允许，"
+            f"但请确认这正是你要的效果。")
+
+    # 被区间覆盖的元件
+    hit: list[str] = []
+    for f in backbone_features or []:
+        if isinstance(f, dict):
+            fs, fe = f.get("start"), f.get("end")
+            quals = f.get("qualifiers") or {}
+            raw = quals.get("label") or quals.get("gene") or f.get("name")
+        else:
+            fs, fe = getattr(f, "start", None), getattr(f, "end", None)
+            raw = getattr(f, "name", None)
+        if fs is None or fe is None:
+            continue
+        if fs < edit_end and fe > edit_start:
+            label = raw[0] if isinstance(raw, (list, tuple)) and raw else (
+                raw if isinstance(raw, str) else "未命名")
+            if label in ("source", None):
+                continue
+            hit.append(f"{label}（{fs:,}–{fe:,}）")
+
+    if hit:
+        warnings.append(
+            "⚠️ 该区间会**删掉**下列原本存在的元件：" + "、".join(hit) +
+            "\n  若其中包含 PcfxA-CmR，则**不能再靠氯霉素筛选**，"
+            "须确认你有替代筛选手段；若含终止子，注意转录通读风险。")
+
+    return errors, warnings
+
+
 @dataclass
 class InsertionResult:
     """一次 cargo 插入的完整结果。"""
@@ -84,14 +221,22 @@ def build_construct_map(spec: ConstructSpec, backbone_seq: str,
                         flank: int = 30,
                         replace_region: tuple[int, int] | None = None,
                         site_id: str | None = None,
-                        cargo_strand: int | None = None):
+                        cargo_strand: int | None = None,
+                        anchor_left: str | None = None,
+                        anchor_right: str | None = None):
     """
     构造插入后的图谱。
 
     参数:
       site_id       插入位点 id（见 spec.cargo_slot.sites）；None → 用策略默认
+      replace_region 直接给坐标（高级）；给了就优先于 site_id
+      anchor_left   紧邻插入点左侧的序列，其 **3' 端** = 左边界（与 Cargo1 同语义）
+      anchor_right  紧邻插入点右侧的序列，其 **5' 端** = 右边界（与 GA778 同语义）
+                    —— 锚序列比坐标稳：换注释版本也不会错位；给了就优先于 site_id
       cargo_strand  cargo 应处的链（+1 / -1）。None → 用位点自身建议值。
                     **若 cargo 需表达，应设为与 CmR 同向（本载体为 -1）。**
+
+    优先级：anchor_left/right > replace_region > site_id > 策略默认。
 
     返回 (ConstructMap, AssemblyPlan, warnings)。
     """
@@ -111,9 +256,41 @@ def build_construct_map(spec: ConstructSpec, backbone_seq: str,
         site.cargo_strand if site else 1)
 
     # ---- 决定编辑区间 ----
-    if replace_region is not None:
+    if anchor_left and anchor_right:
+        edit_start, edit_end = resolve_insertion_anchors(
+            backbone_seq, anchor_left, anchor_right)
+        strategy = "anchors"
+        errors, warns = validate_insertion_region(
+            spec, backbone_features, edit_start, edit_end)
+        if errors:
+            raise ValueError("\n".join(errors))
+        warnings.extend(warns)
+        warnings.append(
+            f"📍 **插入位点**：由两侧锚序列定位 —— 区间 "
+            f"{edit_start:,}–{edit_end:,}（替换 {edit_end - edit_start} bp）\n"
+            f"    左锚 3' 端 = {edit_start:,}；右锚 5' 端 = {edit_end:,}")
+    elif anchor_left or anchor_right:
+        missing = "anchor_right（右锚）" if anchor_left else "anchor_left（左锚）"
+        raise ValueError(
+            f"只给了一侧锚序列 —— 还需要 {missing}。\n"
+            f"  插一个片段需要确定**两个**边界：\n"
+            f"    左锚 = 紧邻插入点左侧的序列（其 3' 端是插入点）\n"
+            f"    右锚 = 紧邻插入点右侧的序列（其 5' 端是插入点）\n"
+            f"  若只想给坐标，用 --replace-region START END。")
+    elif replace_region is not None:
         edit_start, edit_end = int(replace_region[0]), int(replace_region[1])
+        if not (0 <= edit_start <= edit_end <= n):
+            raise ValueError(
+                f"坐标越界：{edit_start:,}–{edit_end:,} 不在 0–{n:,} 内。")
         strategy = "custom"
+        errors, warns = validate_insertion_region(
+            spec, backbone_features, edit_start, edit_end)
+        if errors:
+            raise ValueError("\n".join(errors))
+        warnings.extend(warns)
+        warnings.append(
+            f"📍 **插入位点**：手动指定坐标 —— 区间 {edit_start:,}–{edit_end:,}"
+            f"（替换 {edit_end - edit_start} bp）")
     elif site is not None:
         edit_start, edit_end = site.region
         strategy = f"site:{site.id}"
@@ -301,14 +478,28 @@ def cargo_report(spec: ConstructSpec, cm, plan: AssemblyPlan,
     L.append("> 反向引物 5' 端是下游 overlap 的**反向互补** —— 手工设计最易搞反。\n")
 
     # ---- 2.2 载体扩增引物：三片段组装的另两条，最容易漏订 ----
+    sch = getattr(plan, "scheme", None)   # §2.2 与 §2.3 都用，先取出
     if plan.vector_primers:
         n_vp = len(plan.vector_primers)
-        L.append(f"\n### 2.2 SOP 记录的载体引物（{n_vp} 条）\n")
-        L.append("⚠️ **它们不是一对。** SOP 是三片段组装：\n"
-                 "- **GA725 + Cargo1** 扩增 Fragment 1（Cargo1 是反向引物，3' 端落在 8,866）\n"
-                 "- **GA778 + Frag3_R** 扩增 Fragment 3（GA778 是正向引物，5' 端落在 8,888）\n\n"
-                 "**插入位点的左右边界就是由这两条决定的**（8,866 与 8,888），"
-                 "不是随便取的坐标。完整 6 条引物见 §2.3。\n\n")
+        # 本方案实际用到哪几条 SOP 引物 —— 任意位点下大部分并不适用
+        used: set[str] = set()
+        if sch:
+            for fr in sch["fragments"]:
+                for pr in fr["primers"]:
+                    if pr.get("from_sop"):
+                        used.add(pr["name"])
+        unused = [vp["name"] for vp in plan.vector_primers if vp["name"] not in used]
+        L.append(f"\n### 2.2 SOP 记录的载体引物（规范里共 {n_vp} 条）\n")
+        if sch:
+            L.append(f"> 本方案**实际用到**：{'、'.join(sorted(used)) if used else '（无，全部由序列推导）'}。\n")
+            if unused:
+                L.append(f"> 未用到（只在该引物自身的端点成立时才适用）："
+                         f"{'、'.join(unused)}。\n")
+        L.append("\n⚠️ **它们不是一对。** SOP 是三片段组装：\n"
+                 "- **GA725 + Cargo1** 扩增 Fragment 1（Cargo1 反向，3' 端落在插入位点左边界）\n"
+                 "- **GA778 + Frag3_R** 扩增 Fragment 3（GA778 正向，5' 端落在右边界）\n\n"
+                 "**插入位点的左右边界就是由这两条决定的**（默认位点下为 8,866 与 8,888）。"
+                 "完整 6 条引物见 §2.3。\n\n")
         L.append("| 名称 | 序列 (5'→3') | 长度 | Tm≈ | 产物 | 用途 |\n")
         L.append("|---|---|---|---|---|---|\n")
         for vp in plan.vector_primers:
@@ -329,7 +520,6 @@ def cargo_report(spec: ConstructSpec, cm, plan: AssemblyPlan,
                 L.append(f"> 📝 **{vp['name']}**：{vp['note']}\n")
 
     # ---- 2.3 三片段引物组（6 条）+ 同源区检查 ----
-    sch = getattr(plan, "scheme", None)
     if sch:
         L.append("\n### 2.3 三片段 Gibson 引物组（**共 6 条**）与同源区检查\n")
         L.append("⚠️ **GA725 与 GA778 不是一对引物。** SOP 是三片段、两两配对：\n"

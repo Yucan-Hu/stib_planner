@@ -693,7 +693,8 @@ def cmd_cargo(args: argparse.Namespace) -> int:
     cm, plan, warns = build_construct_map(
         spec, bbseq, feats, cargo=cargo, cargo_name=cname,
         strategy=strategy, overlap_len=args.overlap_len, flank=args.flank,
-        replace_region=rr, site_id=args.site, cargo_strand=args.cargo_strand)
+        replace_region=rr, site_id=args.site, cargo_strand=args.cargo_strand,
+        anchor_left=args.anchor_left, anchor_right=args.anchor_right)
 
     print()
     print("=== 落点与筛选标记 ===")
@@ -947,7 +948,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--overlap-len", type=int, default=22, help="Gibson overlap 长度")
     sp.add_argument("--flank", type=int, default=30,
                     help="从槽位两侧取多少 bp 作为 overlap 依据")
-    sp.add_argument("--site", help="插入位点 id（见规范 cargo_slot.sites）；默认 after_le")
+    sp.add_argument("--site",
+                    help="预设插入位点 id（见 cargo_slot.sites）；"
+                         "默认 after_le。这只是**捷径** —— "
+                         "想指定别的落点用 --anchor-left/--anchor-right")
     sp.add_argument("--cargo-strand", type=int, choices=[1, -1],
                     help="cargo 所在链；-1 = 与 CmR 同向（cargo 需表达时建议）")
     sp.add_argument("--list-sites", action="store_true", help="只列出可选插入位点")
@@ -955,6 +959,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="连 PcfxA-CmR 筛选盒一起替换（会失去氯霉素筛选）")
     sp.add_argument("--replace-region", nargs=2, type=int, metavar=("START", "END"),
                     help="手动指定被替换的载体区间（0-based 半开）；高级用法")
+    sp.add_argument("--anchor-left", metavar="SEQ",
+                    help="紧邻插入点**左侧**的序列，其 3' 端就是插入点"
+                         "（与 Cargo1 同语义）。至少 12 nt，建议 20–30")
+    sp.add_argument("--anchor-right", metavar="SEQ",
+                    help="紧邻插入点**右侧**的序列，其 5' 端就是插入点"
+                         "（与 GA778 同语义）。至少 12 nt，建议 20–30")
     sp.add_argument("--out", default="out", help="输出目录")
     sp.set_defaults(func=cmd_cargo)
 
