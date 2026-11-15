@@ -23,6 +23,8 @@ DeepSeek Harness 插件：**拟杆菌 STIB 基因编辑方案生成器**。
 | Python 3.10+ | 运行 stib-planner。**无需配置** —— 插件自动探测 |
 | `stib/` Python 包 | **随插件发布**，无需另行部署 |
 
+> 完整的版本依赖与兼容性判定规则见 [`../VERSIONS.md`](../VERSIONS.md)（实测环境、`peerDependencies` 含义、升级 DSH 时该核对的 API 表面）。
+
 `stib-planner` 是**纯标准库**实现，无需 pip 安装任何第三方包。
 
 ---

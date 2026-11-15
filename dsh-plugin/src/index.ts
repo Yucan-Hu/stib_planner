@@ -219,6 +219,17 @@ function resolveOutputDir(config: Config, p: string | undefined): string {
 }
 
 /**
+ * 输出**文件**路径：与 [`resolveOutputDir`] 同一套规则。
+ *
+ * 为什么要单独一个名字：语义不同（文件 vs 目录），但解析逻辑相同 ——
+ * 关键是**必须解析**。否则相对路径会被 CLI 按插件目录解释，
+ * 而返回给用户的是相对路径字符串，用户按那个路径去找必然找不到文件。
+ */
+function resolveOutputPath(config: Config, p: string | undefined): string {
+  return resolveOutputDir(config, p)
+}
+
+/**
  * 把用户给的 `accession` 解析成实际基因组文件路径。
  *
  * 支持三种写法 —— 早期版本只会做第 3 种，于是 `.gb` 路径永远进不去：
@@ -610,18 +621,24 @@ export function apply(ctx: Context, config: Config): void {
       if (args.community) cli.push('--community')
       if (args.detailed) cli.push('--detailed')
       // 若只要 md 却什么都没给，则连 html 一起出，落在 plannerDir/out/
-      if (!args.out && !args.html && !args.jsonPath) {
+      // ⚠️ 所有输出路径都解析成绝对路径：CLI 的 cwd 是插件目录，若原样透传
+      //    相对路径，文件会落到 `<插件>/out/...`，而返回给用户的却是相对路径 ——
+      //    用户按那个路径去找必然找不到。
+      const outPath = args.out ? resolveOutputPath(config, args.out) : ''
+      const htmlPath = args.html ? resolveOutputPath(config, args.html) : ''
+      const jsonPath = args.jsonPath ? resolveOutputPath(config, args.jsonPath) : ''
+      if (!outPath && !htmlPath && !jsonPath) {
         cli.push('--out', `${resolvePlannerDir(config)}/out/plan.md`)
         cli.push('--html', `${resolvePlannerDir(config)}/out/plan.html`)
       }
-      if (args.out) cli.push('--out', args.out)
-      if (args.html) cli.push('--html', args.html)
-      if (args.jsonPath) cli.push('--json', args.jsonPath)
+      if (outPath) cli.push('--out', outPath)
+      if (htmlPath) cli.push('--html', htmlPath)
+      if (jsonPath) cli.push('--json', jsonPath)
 
       const r = await runCli(ctx, config, cli, exec.signal)
       if (!r.ok) return { ok: false, content: failText(r) }
-      // 产出文件时，在末尾明确列出路径 —— 否则用户不知道文件写在哪
-      const wanted = [args.out, args.html, args.jsonPath].filter(Boolean)
+      // 产出文件时，在末尾明确列出路径 —— 用**解析后**的绝对路径
+      const wanted = [outPath, htmlPath, jsonPath].filter(Boolean)
       const tail = wanted.length
         ? `\n\n---\n**已写出文件**\n` +
           wanted.map((f) => `- \`${f}\``).join('\n') +
@@ -837,7 +854,7 @@ export function apply(ctx: Context, config: Config): void {
       if (args.minGap !== undefined) cli.push('--min-gap', String(args.minGap))
       if (args.top !== undefined) cli.push('--top', String(args.top))
       if (args.sgPerSite !== undefined) cli.push('--sg', String(args.sgPerSite))
-      if (args.out) cli.push('--out', args.out)
+      if (args.out) cli.push('--out', resolveOutputPath(config, args.out))
       const r = await runCli(ctx, config, cli, exec.signal)
       return { ok: r.ok, content: r.ok ? r.stdout : failText(r) }
     },
@@ -893,7 +910,7 @@ export function apply(ctx: Context, config: Config): void {
         '--cargo', resolveInputPath(config, args.cargoFasta),
         '--backbone', resolveInputPath(config, args.backbone),
       ]
-      if (args.spec) cli.push('--spec', args.spec)
+      if (args.spec) cli.push('--spec', resolveInputPath(config, args.spec))
       if (args.site) cli.push('--site', args.site)
       if (args.cargoStrand !== undefined) cli.push('--cargo-strand', String(args.cargoStrand))
       if (args.listSites) cli.push('--list-sites')

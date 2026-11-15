@@ -381,9 +381,17 @@ def cmd_plan(args: argparse.Namespace) -> int:
     print(f"候选通过/淘汰   : {t['n_passed']} / {t['n_rejected']}（共扫描 {t['n_candidates_scanned']}）")
     ot_note = "保证不漏检" if t["offtarget_guaranteed"] else "**可能漏检**"
     print(f"脱靶阈值        : ≤{t['max_mismatch']} 错配（{ot_note}）")
+    # 落点文案与报告层保持一致：目标是**非基因区间**（中性位点/基因间区）时
+    # 不能说「CDS」—— 那里根本没有 CDS（v0.0.9 修）。
+    _place_map = (
+        {"strict": "★严格区(CDS 前1/3-2/3)", "central80": "中段80%(排除前后5%)",
+         "in_gene": "基因端部5%", "outside": "基因外"}
+        if plan.target.get("region_method", "gene") == "gene" else
+        {"strict": "★区间中央(前1/3-2/3)", "central80": "区间中段80%(排除前后5%)",
+         "in_gene": "区间端部5%", "outside": "区间外"}
+    )
     print(f"首选落点        : "
-          + ({"strict": "★严格区(CDS 前1/3-2/3)", "central80": "中段80%(排除前后5%)",
-              "in_gene": "基因端部5%", "outside": "基因外"}.get(plan.candidates[0].placement, "-")
+          + (_place_map.get(plan.candidates[0].placement, "-")
              if plan.candidates else "n/a"))
     print(f"首选脱靶        : 风险分 "
           + (f"{plan.candidates[0].risk_score:.1f}" if plan.candidates else "n/a")
