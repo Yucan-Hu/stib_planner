@@ -338,13 +338,19 @@ function failText(r: CliResult): string {
 function resolvePlannerDir(config: Config): string {
   const configured = (config.plannerDir ?? '').trim()
   if (configured && fileExists(join(configured, 'stib', 'cli.py'))) return configured
+  // 1) 包内自带：`npm pack` 时 stage-python 把 Python 代码复制进 dsh-plugin/stib
+  if (fileExists(join(BUNDLED_PYTHON_DIR, 'stib', 'cli.py'))) return BUNDLED_PYTHON_DIR
+  // 2) 仓库根布局：从 git 安装的包，Python 代码在 `<包根>/stib`（与 dsh-plugin/ 同级）
+  //    —— 这样 git 安装不必把 Python 代码复制两份。
+  const parent = dirname(BUNDLED_PYTHON_DIR)
+  if (fileExists(join(parent, 'stib', 'cli.py'))) return parent
   return BUNDLED_PYTHON_DIR
 }
 
-/** 基因组缓存目录。默认放在插件目录下的 `data/`。 */
+/** 基因组缓存目录。默认放在生效的 planner 目录下的 `data/`。 */
 function resolveDataDir(config: Config): string {
   const configured = (config.dataDir ?? '').trim()
-  return configured || join(BUNDLED_PYTHON_DIR, 'data')
+  return configured || join(resolvePlannerDir(config), 'data')
 }
 
 /**

@@ -1,10 +1,18 @@
 node_modules/
-lib/
+
+# ⚠️ `lib/` 是**故意提交**的，不要加回来。
+#    从 git 安装时（`dsh plugin add github:...`）pnpm 默认**不跑**依赖的
+#    install/build 脚本，所以包里必须带编译好的 JS，否则装完无法加载。
+#    改完 src/index.ts 请运行 `npm run build` 并把 lib/ 一起提交。
+# lib/
+
 # 打包时由 scripts/stage-python.mjs 生成的 Python 分发副本
 # 权威源码在仓库根 ../stib
 stib/
+
 *.tgz
 *.log
+
 # 本地调试产物与备份（不应进仓库）
 out/
 *.bak

@@ -1,0 +1,62 @@
+{
+  "name": "dsh-stib-planner",
+  "version": "0.0.10",
+  "description": "STIB Planner for DeepSeek Harness — 拟杆菌 STIB 基因编辑方案生成器（位点决策 / 全基因组脱靶 / 引物设计 / cargo 组装 / 定制协议）",
+  "type": "module",
+  "main": "./dsh-plugin/lib/index.js",
+  "types": "./dsh-plugin/lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dsh-plugin/lib/types/index.d.ts",
+      "default": "./dsh-plugin/lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./dsh-plugin/cordis.patch.yml"
+    }
+  },
+  "files": [
+    "dsh-plugin/lib",
+    "dsh-plugin/skills",
+    "dsh-plugin/cordis.patch.yml",
+    "stib",
+    "testdata",
+    "README.md",
+    "USER_GUIDE.md",
+    "VERSIONS.md",
+    "ROADMAP.md",
+    "LICENSE"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "bacteroides",
+    "genome-editing",
+    "STIB",
+    "CRISPR-transposase"
+  ],
+  "engines": {
+    "node": ">=24.9.0"
+  },
+  "scripts": {
+    "build": "npm --prefix dsh-plugin run clean && npm --prefix dsh-plugin run build && npm --prefix dsh-plugin run stage:python",
+    "verify": "node scripts/verify-package.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-subprocess": "^0.2.2-rc.3",
+    "@deepseek-ai/dsh-tools": "^0.2.2-rc.3",
+    "@deepseek-ai/schemastery": "~3.19.0"
+  },
+  "author": "Yucan Hu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yucan-Hu/stib_planner.git"
+  },
+  "homepage": "https://github.com/Yucan-Hu/stib_planner#readme",
+  "bugs": {
+    "url": "https://github.com/Yucan-Hu/stib_planner/issues"
+  }
+}

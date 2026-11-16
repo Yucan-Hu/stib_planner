@@ -1,4 +1,4 @@
-# Python
+# ── Python ──
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -6,15 +6,22 @@ __pycache__/
 .venv/
 venv/
 
-# 插件构建产物与分发副本
-# lib/ 由 tsc 生成；stib/ 是打包时从仓库根复制进来的分发副本
-# （权威源码在仓库根的 stib/，不要重复提交）
-dsh-plugin/lib/
+# ── 插件构建产物 ──
+# ⚠️ `dsh-plugin/lib/` 是**故意提交**的：从 git 安装时 pnpm 不会跑构建
+#    （pnpm 10+ 默认阻止依赖的构建脚本），所以包里必须带编译好的 JS。
+#    改完 src/index.ts 请运行 `npm run build` 并一起提交。
+# dsh-plugin/lib/
+
+# 打包时由 scripts/stage-python.mjs 生成的 Python 分发副本
+# 权威源码在仓库根 stib/（从 git 安装时插件直接用它，不需要这份副本）
 dsh-plugin/stib/
 dsh-plugin/node_modules/
+node_modules/
 dsh-plugin/*.tgz
+*.tgz
+*.bak
 
-# 运行产出（方案 / 图谱 / 报告）
+# ── 运行产出（方案 / 图谱 / 报告）──
 # 运行结果不是源码。要看示例就本地跑：
 #   python -m stib.cli selftest
 #   python -m stib.cli plan --genome testdata/mini.gb --gene thrA --detailed --out out/plan.md
@@ -31,19 +38,19 @@ batch_*.md
 batch_*.json
 batch_*.html
 
-# 基因组缓存（体积大，可随时从 NCBI 取回）
+# ── 基因组缓存（体积大，可随时从 NCBI 取回）──
 #   参考文献基因组 NC_004663.1 约 6.1 MB
 #   用户放入的 BtVPI5482.gb 约 14.5 MB
 data/*.fasta
 data/*.gb
 data/*.gbk
 
-# 基因组缓存：体积大、可随时从 NCBI 取回，不提交
+# 示例用的小基因组要保留（59 KB，用于自检与按基因名定位的演示）
+# 注意：git 的否定规则不能覆盖先前已排除的路径，
+#       所以 ! 必须写在 testdata/*.gb 之前，否则 mini.gb 会被一起排除。
+!testdata/mini.gb
 testdata/*.gb
 testdata/*.gbk
-# 但示例用的小基因组要**保留**（59 KB，用于自检与按基因名定位的演示）。
-# 否定规则必须写在**排除规则之后** —— 顺序反了不生效（实测确认）。
-!testdata/mini.gb
 
 # 旧版完整 README（内容已拆分到 USER_GUIDE / RELEASE / VERIFICATION）
 README_full.md

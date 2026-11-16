@@ -1,6 +1,6 @@
 # STIB Planner — 拟杆菌 STIB 基因编辑方案生成器
 
-**v0.0.9（预发布）** ｜ 纯 Python 标准库，**零第三方依赖** ｜ 可离线运行
+**v0.0.10（预发布）** ｜ 纯 Python 标准库，**零第三方依赖** ｜ 可离线运行
 
 > ⚠️ **未做湿实验验证。** 本工具的全部领域知识、条件值与判定规则均来自下方论文
 > 及其配套 SOP，但它**不替代**原始来源，也不保证在你的菌株与实验条件下成立。
@@ -47,7 +47,33 @@
 
 ## 安装
 
-### 推荐：装 DeepSeek Harness 桌面版，然后在对话框里让它自己装
+### 方式 A：命令行一行装好（会用终端就用这个）
+
+仓库根就是一个完整的 DSH 组合包，所以直接把 **Git URL** 交给 `dsh plugin add`：
+
+```bash
+dsh plugin add https://github.com/Yucan-Hu/stib_planner
+```
+
+> **一定是仓库地址，不要加 `/dsh-plugin` 子目录后缀。**
+> `dsh plugin add` 只是转发给 `pnpm add`，装的是**仓库根**；
+> 根目录的 `package.json` 已经声明了 `dsh.bundle`（组合包清单）。
+>
+> 装完**必须完全退出并重开 DSH** —— 插件在启动时加载。
+
+国内网络可加镜像：
+
+```bash
+dsh plugin add https://github.com/Yucan-Hu/stib_planner \
+  --registry=https://registry.npmmirror.com/
+```
+
+⚠️ **不用 `pnpm add` 自己装**。`pnpm add <仓库>` 只把代码放进
+`node_modules`，**不会**注册到 DSH 的 bundle 列表，所以会看到
+「这个包没有声明组合包，不能作为插件管理」之类的报错 —— 那是漏了
+`dsh plugin` 这一层。若已经误装过，先 `pnpm remove stib_planner` 再按上面重来。
+
+### 方式 B（推荐给不想碰命令行的）：装桌面版，在对话框里让它自己装
 
 **不需要命令行、不需要 git、不需要懂 Python。** 全程在对话框里完成。
 

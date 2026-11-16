@@ -21,6 +21,30 @@ Python 侧**不使用任何第三方包**（纯标准库），所以不存在 `p
 
 ---
 
+## 1.5 从 git 安装时的包布局（重要）
+
+`dsh plugin add <git-url>` 只是转发给 `pnpm add`，装的是**仓库根**。
+所以仓库根自己就是一个完整的组合包：
+
+```
+stib_planner/                  ← 装进来的就是这个目录
+├── package.json               ← name=dsh-stib-planner，声明 dsh.bundle.patch
+├── stib/                      ← Python 端（插件直接用这一份，不复制）
+├── testdata/                  ← 载体 psh4300C.dna + 示例 genome/cargo
+└── dsh-plugin/
+    ├── lib/                   ← **编译好的 JS，随仓库提交**
+    ├── cordis.patch.yml
+    └── skills/
+```
+
+两个容易踩的点：
+
+1. **`dsh-plugin/lib/` 必须提交**。pnpm 10+ 默认阻止依赖的构建脚本，
+   从 git 装的时候不会跑 `tsc` —— 没有 `lib/` 就加载不了。
+2. **包根的 `stib/` 是唯一权威源码**。插件按
+   `包根/stib/cli.py` → `dsh-plugin/stib/cli.py` 的顺序找，
+   所以 git 安装和 `npm pack` 两种布局都能跑。
+
 ## 2. 插件声明的依赖
 
 `dsh-plugin/package.json`：
